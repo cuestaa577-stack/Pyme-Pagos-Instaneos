@@ -19,12 +19,38 @@ function bool(value, fallback = false) {
  * primero que sea escribible; el último recurso siempre funciona porque está
  * dentro del proyecto.
  */
+const REPO_ROOT = path.resolve(__dirname, '..');
+
+/**
+ * ¿La carpeta cae dentro del código del proyecto?
+ * En Render (y en cualquier PaaS) el código se reemplaza en cada deploy y el
+ * sistema de archivos es efímero: si la base vive ahí, se borra en cada
+ * reinicio. Escribir sí se puede, así que la app no falla… pero pierde datos.
+ * Por eso lo detectamos y avisamos en voz alta.
+ */
+function isInsideRepo(dir) {
+  const rel = path.relative(REPO_ROOT, path.resolve(dir));
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
 function resolveDataDir() {
+  const raw = process.env.DATA_DIR;
   const candidates = [];
-  if (process.env.DATA_DIR) candidates.push(path.resolve(process.env.DATA_DIR));
+  if (raw) {
+    // Una ruta relativa (p. ej. "app/data") se resuelve contra el cwd, que en
+    // Render es la raíz del repo: termina siendo código efímero.
+    if (!path.isAbsolute(raw)) {
+      console.warn(
+        `[config] DATA_DIR="${raw}" es una ruta RELATIVA; se resuelve a ` +
+          `${path.resolve(raw)}. En Render usa una ruta ABSOLUTA igual al ` +
+          'Mount Path del disco (p. ej. /var/data).'
+      );
+    }
+    candidates.push(path.resolve(raw));
+  }
   // Rutas típicas de un disco persistente en Render.
   candidates.push('/var/data');
-  candidates.push(path.join(__dirname, '..', 'data'));
+  candidates.push(path.join(REPO_ROOT, 'data'));
   candidates.push(path.join(process.cwd(), 'data'));
   candidates.push(path.join(require('os').tmpdir(), 'remesaya-data'));
 
@@ -35,10 +61,18 @@ function resolveDataDir() {
       const probe = path.join(dir, `.write-test-${process.pid}`);
       fs.writeFileSync(probe, 'ok');
       fs.unlinkSync(probe);
-      if (process.env.DATA_DIR && path.resolve(process.env.DATA_DIR) !== dir) {
+      if (raw && path.resolve(raw) !== dir) {
         console.warn(
-          `[config] DATA_DIR=${process.env.DATA_DIR} no es escribible; usando ${dir}. ` +
+          `[config] DATA_DIR=${raw} no es escribible; usando ${dir}. ` +
             'Revisa que el disco persistente esté montado en esa ruta.'
+        );
+      }
+      if (isInsideRepo(dir)) {
+        console.warn(
+          `[config] ATENCIÓN: la base quedará en ${dir}, DENTRO del código. ` +
+            'En Render el sistema de archivos es efímero: se borra en cada ' +
+            'deploy o reinicio. Monta un disco y apunta DATA_DIR a su Mount ' +
+            'Path absoluto (normalmente /var/data).'
         );
       }
       return dir;
@@ -48,7 +82,7 @@ function resolveDataDir() {
   }
   // Si ni siquiera el temporal funciona, devolvemos la ruta pedida y que falle
   // explícitamente más adelante con un mensaje claro.
-  return path.resolve(process.env.DATA_DIR || path.join(__dirname, '..', 'data'));
+  return path.resolve(raw || path.join(REPO_ROOT, 'data'));
 }
 
 const config = {
