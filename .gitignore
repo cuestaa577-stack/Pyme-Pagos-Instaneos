@@ -1,0 +1,19 @@
+# Dependencias
+node_modules/
+
+# Secretos y configuración local
+.env
+.env.local
+*.log
+
+# Base de datos y respaldos
+data/*.db
+data/*.db-*
+data/*.sqlite
+data/backups/
+
+# Sistema
+.DS_Store
+Thumbs.db
+coverage/
+dist/
