@@ -1,22 +1,40 @@
 'use strict';
 /**
- * Restablece la contraseña del administrador definido en .env.
+ * Compatibilidad: restablece la contraseña del administrador definido en el
+ * entorno (ADMIN_EMAIL / ADMIN_PASSWORD).
+ *
+ * Se mantiene por si alguien ya tenía este comando en un script o en la
+ * documentación. Internamente delega en admin.js, que es la única fuente de
+ * verdad, para que ambos hagan exactamente lo mismo.
+ *
  * Uso: node server/scripts/reset-admin.js
+ * Equivale a:
+ *   node server/scripts/admin.js --reset --email $ADMIN_EMAIL --password $ADMIN_PASSWORD
  */
-const bcrypt = require('bcryptjs');
-const config = require('../config');
-const { db } = require('../db');
+const path = require('path');
+const { spawnSync } = require('child_process');
 
-const hash = bcrypt.hashSync(config.admin.password, 12);
-const existing = db.prepare('SELECT id FROM admins WHERE email = ?').get(config.admin.email);
-if (existing) {
-  db.prepare('UPDATE admins SET password_hash = ? WHERE id = ?').run(hash, existing.id);
-  console.log(`Contraseña actualizada para ${config.admin.email}`);
-} else {
-  db.prepare('INSERT INTO admins (email, password_hash, name) VALUES (?, ?, ?)').run(
-    config.admin.email,
-    hash,
-    'Administrador'
+const config = require('../config');
+
+if (!process.env.ADMIN_PASSWORD) {
+  console.error(
+    'ADMIN_PASSWORD no está definida. Define esa variable o usa directamente:\n' +
+      '  node server/scripts/admin.js --reset --email TU_CORREO --password TU_CLAVE'
   );
-  console.log(`Administrador creado: ${config.admin.email}`);
+  process.exit(1);
 }
+
+const result = spawnSync(
+  process.execPath,
+  [
+    path.join(__dirname, 'admin.js'),
+    '--reset',
+    '--email',
+    config.admin.email,
+    '--password',
+    config.admin.password,
+  ],
+  { stdio: 'inherit' }
+);
+
+process.exit(result.status === null ? 1 : result.status);
