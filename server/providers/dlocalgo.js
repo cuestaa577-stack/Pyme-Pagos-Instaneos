@@ -13,6 +13,15 @@ class ProviderError extends Error {
   }
 }
 
+/**
+ * dLocal Go sólo opera de verdad cuando están las tres credenciales.
+ * Sin ellas no existe ningún modo simulado: la vía se oculta y el cobro
+ * se hace por transferencia con comprobante.
+ */
+function isLive() {
+  return Boolean(config.dlocalgo.apiUrl && config.dlocalgo.apiKey && config.dlocalgo.apiSecret);
+}
+
 function authHeader() {
   return `Bearer ${config.dlocalgo.apiKey}:${config.dlocalgo.apiSecret}`;
 }
@@ -202,6 +211,7 @@ function verifyWebhookSignature(rawBody, authorizationHeader) {
 
 module.exports = {
   ProviderError,
+  isLive,
   request,
   normalizeStatus,
   normalizePayment,

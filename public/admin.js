@@ -26,7 +26,7 @@ function esc(v) {
 }
 
 function money(cents, currency) {
-  const zero = ['COP', 'CLP', 'PYG'].includes(currency);
+  const zero = ['COP', 'CLP', 'PYG', 'VES'].includes(currency);
   const value = zero ? Number(cents || 0) : Number(cents || 0) / 100;
   try {
     return new Intl.NumberFormat('es-VE', {
@@ -87,7 +87,7 @@ function renderLogin() {
       <div class="login-bg" aria-hidden="true"></div>
       <div class="card login-card">
         <div class="login-brand">
-          <div class="logo">R</div>
+          <div class="logo"><img src="/icons/logo-mark.png" alt="RemesaYa" width="48" height="48" /></div>
           <div>
             <div class="login-brand-name">RemesaYa</div>
             <div class="login-brand-sub">Consola del propietario</div>
@@ -201,7 +201,7 @@ function shell(content) {
   root().innerHTML = `
     <div class="admin">
       <aside class="side">
-        <div class="brand"><div class="logo">R</div><div><strong>RemesaYa</strong><span>Administración</span></div></div>
+        <div class="brand"><div class="logo"><img src="/icons/logo-mark.png" alt="RemesaYa" width="34" height="34" /></div><div><strong>RemesaYa</strong><span>Administración</span></div></div>
         <nav class="side-nav">
           ${TABS.map(([id, label, ico]) => `<a href="#" data-tab="${id}" class="${A.tab === id ? 'active' : ''}">${icon(ico, 18)}<span>${label}</span></a>`).join('')}
         </nav>
@@ -341,12 +341,22 @@ async function tabOrdenes() {
                 <td>${esc(o.amount_formatted)}</td>
                 <td>${esc(o.destination_amount_formatted || '—')}</td>
                 <td>${badge(o.status)}</td>
-                <td><button class="btn btn-sm btn-ghost" data-refund="${esc(o.public_id)}">Reembolsar</button></td>
+                <td class="nowrap">
+                  <button class="btn btn-sm btn-ghost" data-open="${esc(o.public_id)}">Ver</button>
+                  ${['pending', 'processing'].includes(o.status) ? `<button class="btn btn-sm btn-primary" data-review="${esc(o.public_id)}">Revisar</button>` : ''}
+                  <button class="btn btn-sm btn-ghost" data-refund="${esc(o.public_id)}">Reembolsar</button>
+                </td>
               </tr>`).join('') || '<tr><td colspan="7" class="muted">Sin órdenes todavía.</td></tr>'}
           </tbody>
         </table>
       </div>
     </div>`;
+  document.querySelectorAll('[data-open]').forEach((btn) => {
+    btn.addEventListener('click', () => openOrder(btn.dataset.open, false));
+  });
+  document.querySelectorAll('[data-review]').forEach((btn) => {
+    btn.addEventListener('click', () => openOrder(btn.dataset.review, true));
+  });
   document.querySelectorAll('[data-refund]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       if (!confirm(`¿Reembolsar la orden ${btn.dataset.refund}?`)) return;
@@ -365,6 +375,111 @@ async function tabOrdenes() {
       tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
     });
   });
+}
+
+
+/* ---------------- detalle y revisión de una orden ---------------- */
+
+async function openOrder(publicId, reviewMode) {
+  let data;
+  try {
+    data = await api(`/orders/${encodeURIComponent(publicId)}`);
+  } catch (err) {
+    return toast(err.message, 'err');
+  }
+  const o = data.order || {};
+  const proofs = Array.isArray(o.proofs) ? o.proofs : [];
+  const meta = o.metadata || {};
+  const canReview = ['pending', 'processing'].includes(o.status);
+
+  const proofRows = proofs.length
+    ? proofs
+        .map(
+          (p) => `
+        <tr>
+          <td>${p.id}</td>
+          <td>${badge(p.status)}</td>
+          <td class="mono small">${esc(p.reference || '—')}</td>
+          <td class="small">${esc(p.original_name || '—')}</td>
+          <td class="small muted">${esc(p.created_at || '')}</td>
+          <td><a class="btn btn-sm btn-ghost" href="/api/admin/proofs/${p.id}/file" target="_blank" rel="noopener">Abrir</a></td>
+        </tr>`
+        )
+        .join('')
+    : '<tr><td colspan="6" class="muted">Sin comprobantes subidos.</td></tr>';
+
+  const html = `
+    <div class="modal-back" id="modal-back">
+      <div class="modal">
+        <div class="modal-head">
+          <div>
+            <h3>Orden <span class="mono">${esc(o.public_id)}</span></h3>
+            <p class="muted small">${esc(o.customer_name || '—')} · ${esc(o.method)} · ${esc(o.provider)}</p>
+          </div>
+          <button class="btn btn-sm btn-ghost" id="modal-close">Cerrar</button>
+        </div>
+        <div class="modal-body">
+          <div class="summary-list">
+            <div class="sr"><span>Estado</span><strong>${badge(o.status)}</strong></div>
+            <div class="sr"><span>Monto</span><strong>${esc(o.amount_formatted || '')}</strong></div>
+            <div class="sr"><span>Comisión</span><strong>${esc(o.fee_formatted || '')}</strong></div>
+            <div class="sr"><span>Recibe</span><strong>${esc(o.destination_amount_formatted || '')}</strong></div>
+            <div class="sr"><span>Beneficiario</span><strong>${esc(o.beneficiary_name || '—')}</strong></div>
+            <div class="sr"><span>Documento</span><strong class="mono">${esc(o.beneficiary_doc_type || '')}-***${esc(o.beneficiary_doc_last4 || '')}</strong></div>
+            <div class="sr"><span>Vía de entrega</span><strong>${esc(o.rail || '—')}</strong></div>
+            <div class="sr"><span>Tasa</span><strong>1 ${esc(o.currency)} = ${esc(o.fx_rate)} ${esc(o.destination_currency)}</strong></div>
+            ${meta.proof_reference ? `<div class="sr"><span>Referencia declarada</span><strong class="mono">${esc(meta.proof_reference)}</strong></div>` : ''}
+            ${meta.rejection_reason ? `<div class="sr"><span>Motivo de rechazo</span><strong>${esc(meta.rejection_reason)}</strong></div>` : ''}
+          </div>
+
+          <h4 class="mt16">Comprobantes</h4>
+          <div class="tbl-wrap">
+            <table class="tbl">
+              <thead><tr><th>#</th><th>Estado</th><th>Referencia</th><th>Archivo</th><th>Subido</th><th></th></tr></thead>
+              <tbody>${proofRows}</tbody>
+            </table>
+          </div>
+
+          ${canReview ? `
+          <h4 class="mt16">Revisión del pago</h4>
+          <label class="field"><span>Nota (obligatoria si rechazas)</span><input class="input" id="rev-note" placeholder="Ej. el comprobante no coincide con el monto" /></label>
+          <div class="flex gap8 mt8">
+            <button class="btn btn-primary" id="rev-approve">Aprobar pago y entregar</button>
+            <button class="btn btn-ghost" id="rev-reject">Rechazar y pedir otro</button>
+          </div>
+          <p class="muted small mt8">Al aprobar se confirma el cobro, se registra en el ledger y se libera la entrega al beneficiario. Al rechazar, el cliente recibe el motivo y puede subir otro comprobante.</p>
+          ` : ''}
+        </div>
+      </div>
+    </div>`;
+
+  const host = document.createElement('div');
+  host.innerHTML = html;
+  document.body.appendChild(host.firstElementChild);
+  const back = $('#modal-back');
+  const close = () => back?.remove();
+  $('#modal-close')?.addEventListener('click', close);
+  back?.addEventListener('click', (e) => {
+    if (e.target === back) close();
+  });
+
+  const review = async (action) => {
+    const note = ($('#rev-note')?.value || '').trim();
+    if (action === 'reject' && !note) return toast('Escribe el motivo del rechazo.', 'err');
+    try {
+      await api(`/orders/${encodeURIComponent(publicId)}/review`, {
+        method: 'POST',
+        body: JSON.stringify({ action, note }),
+      });
+      toast(action === 'approve' ? 'Pago aprobado y entrega liberada.' : 'Pago rechazado.', 'ok');
+      close();
+      renderTab();
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  };
+  $('#rev-approve')?.addEventListener('click', () => review('approve'));
+  $('#rev-reject')?.addEventListener('click', () => review('reject'));
 }
 
 async function tabSaldos() {
@@ -428,9 +543,9 @@ async function tabRetiros() {
         <div class="panel-head"><h3>Historial</h3></div>
         <div class="tbl-wrap">
           <table class="tbl">
-            <thead><tr><th>ID</th><th>Monto</th><th>Vía</th><th>Estado</th></tr></thead>
+            <thead><tr><th>ID</th><th>Monto</th><th>Vía</th><th>Estado</th><th></th></tr></thead>
             <tbody>
-              ${data.items.map((w) => `<tr><td class="mono">${esc(w.public_id)}</td><td>${esc(w.total_formatted)}</td><td>${esc(w.rail)}</td><td>${badge(w.status)}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">Sin retiros.</td></tr>'}
+              ${data.items.map((w) => `<tr><td class="mono">${esc(w.public_id)}</td><td>${esc(w.total_formatted)}</td><td>${esc(w.rail)}</td><td>${badge(w.status)}</td><td>${['pending', 'processing', 'failed'].includes(w.status) ? `<button class="btn btn-sm btn-ghost" data-wd-paid="${esc(w.public_id)}">Marcar pagado</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Sin retiros.</td></tr>'}
             </tbody>
           </table>
         </div>
@@ -438,13 +553,44 @@ async function tabRetiros() {
     </div>`;
 
   const cfg = await fetch('/api/config').then((r) => r.json()).catch(() => ({}));
-  const banks = cfg?.vepay?.banks || [];
+  const banks = Array.isArray(cfg?.vepay?.banks) ? cfg.vepay.banks : [];
   const bankSel = $('#wd-bank');
-  bankSel.innerHTML = `<option value="">—</option>${banks.map((b) => `<option value="${b.code}">${esc(b.name)}</option>`).join('')}`;
+  const keyInput = $('#wd-key');
+  const fillBanks = (rail) => {
+    if (rail === 'breb') {
+      bankSel.innerHTML = '<option value="">—</option>';
+      bankSel.disabled = true;
+      keyInput.placeholder = 'Llave BRE-B (celular, correo o documento)';
+    } else {
+      bankSel.disabled = false;
+      bankSel.innerHTML = `<option value="">—</option>${banks
+        .map((b) => `<option value="${esc(b.code)}">${esc(b.name)}</option>`)
+        .join('')}`;
+      keyInput.placeholder = rail === 'transfer_ve' ? 'Número de cuenta (20 dígitos)' : '04141234567';
+    }
+  };
+  fillBanks($('#wd-rail').value);
 
   $('#wd-rail').addEventListener('change', (e) => {
     const ves = e.target.value !== 'breb';
     $('#wd-cur').value = ves ? 'VES' : 'COP';
+    fillBanks(e.target.value);
+  });
+
+  document.querySelectorAll('[data-wd-paid]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const ref = window.prompt('Referencia de la transferencia (opcional):') || '';
+      try {
+        await api(`/withdrawals/${btn.dataset.wdPaid}/paid`, {
+          method: 'POST',
+          body: JSON.stringify({ reference: ref }),
+        });
+        toast('Retiro marcado como pagado.', 'ok');
+        renderTab();
+      } catch (err) {
+        toast(err.message, 'err');
+      }
+    });
   });
 
   $('#wd-go').addEventListener('click', async () => {
@@ -474,41 +620,83 @@ async function tabRetiros() {
 async function tabPayouts() {
   const [data, bens] = await Promise.all([api('/payouts?limit=100'), api('/beneficiaries?limit=100')]);
   A.payouts = data;
+  const DEST_CUR = { CO: 'COP', VE: 'VES', AR: 'ARS', BR: 'BRL', CL: 'CLP', MX: 'MXN', PE: 'PEN', PY: 'PYG', UY: 'UYU' };
+  const ZERO = ['COP', 'VES', 'PYG', 'CLP'];
+  const benOptions = bens.items
+    .map((b) => {
+      const cur = DEST_CUR[b.country] || 'USD';
+      return `<option value="${b.id}" data-cur="${esc(cur)}">${esc(b.full_name)} · ${esc(b.rail)} · ${esc(b.country)}</option>`;
+    })
+    .join('');
   $('#panel').innerHTML = `
     <div class="grid2">
       <div class="panel">
         <div class="panel-head"><h3>Pago instantáneo</h3></div>
-        <label class="field"><span>Beneficiario</span>
-          <select class="input" id="po-ben">${bens.items.map((b) => `<option value="${b.id}">${esc(b.full_name)} · ${esc(b.rail)} · ${esc(b.country)}</option>`).join('')}</select>
+        ${
+          bens.items.length
+            ? `<label class="field"><span>Beneficiario</span>
+          <select class="input" id="po-ben">${benOptions}</select>
         </label>
         <div class="row2">
-          <label class="field"><span>Monto destino</span><input class="input" id="po-amount" placeholder="100.00" /></label>
+          <label class="field"><span>Monto destino (<span id="po-cur-label">—</span>)</span><input class="input" id="po-amount" placeholder="100.00" inputmode="decimal" /></label>
           <label class="field"><span>Debitar de</span><select class="input" id="po-src"><option>USD</option><option>COP</option><option>VES</option></select></label>
         </div>
-        <button class="btn btn-primary btn-block mt16" id="po-go">Pagar al instante</button>
+        <button class="btn btn-primary btn-block mt16" id="po-go">Pagar al instante</button>`
+            : `<div class="notice notice-info">Aún no hay beneficiarios. Crea uno desde una orden o desde la sección Beneficiarios.</div>`
+        }
       </div>
       <div class="panel">
         <div class="panel-head"><h3>Historial</h3></div>
         <div class="tbl-wrap">
           <table class="tbl">
-            <thead><tr><th>ID</th><th>Beneficiario</th><th>Monto</th><th>Estado</th></tr></thead>
+            <thead><tr><th>ID</th><th>Beneficiario</th><th>Monto</th><th>Estado</th><th></th></tr></thead>
             <tbody>
-              ${data.items.map((p) => `<tr><td class="mono">${esc(p.public_id)}</td><td>${esc(p.beneficiary_name || '—')}</td><td>${esc(p.amount_formatted)}</td><td>${badge(p.status)}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">Sin pagos.</td></tr>'}
+              ${data.items.map((p) => `<tr><td class="mono">${esc(p.public_id)}</td><td>${esc(p.beneficiary_name || '—')}</td><td>${esc(p.amount_formatted)}</td><td>${badge(p.status)}</td><td>${['pending', 'processing', 'failed'].includes(p.status) ? `<button class="btn btn-sm btn-ghost" data-po-paid="${esc(p.public_id)}">Marcar pagado</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Sin pagos.</td></tr>'}
             </tbody>
           </table>
         </div>
       </div>
     </div>`;
+  document.querySelectorAll('[data-po-paid]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const ref = window.prompt('Referencia de la transferencia (opcional):') || '';
+      try {
+        await api(`/payouts/${btn.dataset.poPaid}/paid`, {
+          method: 'POST',
+          body: JSON.stringify({ reference: ref }),
+        });
+        toast('Entrega marcada como pagada.', 'ok');
+        renderTab();
+      } catch (err) {
+        toast(err.message, 'err');
+      }
+    });
+  });
+
+  if (!bens.items.length) return;
+  const curLabel = $('#po-cur-label');
+  const syncCur = () => {
+    const opt = $('#po-ben').selectedOptions[0];
+    const cur = opt?.dataset.cur || 'USD';
+    curLabel.textContent = cur;
+    const src = $('#po-src');
+    src.value = cur === 'COP' || cur === 'VES' ? cur : 'USD';
+    $('#po-amount').placeholder = ZERO.includes(cur) ? '1000' : '100.00';
+  };
+  syncCur();
+  $('#po-ben').addEventListener('change', syncCur);
   $('#po-go').addEventListener('click', async () => {
     const amount = Number($('#po-amount').value);
-    if (!amount) return toast('Ingresa un monto.', 'err');
+    if (!amount || amount <= 0) return toast('Ingresa un monto mayor que cero.', 'err');
+    const opt = $('#po-ben').selectedOptions[0];
+    const destCur = opt?.dataset.cur || 'USD';
     const src = $('#po-src').value;
     try {
       const res = await api('/payouts', {
         method: 'POST',
         body: JSON.stringify({
           beneficiaryId: Number($('#po-ben').value),
-          amountCents: Math.round(amount * (src === 'COP' || src === 'VES' ? 1 : 100)),
+          amountCents: Math.round(amount * (ZERO.includes(destCur) ? 1 : 100)),
           sourceCurrency: src,
         }),
       });
@@ -536,13 +724,27 @@ async function tabBeneficiarios() {
     </div>`;
 }
 
+function envRows(gateway, env) {
+  const entries = Object.entries(env || {});
+  if (!entries.length) return `<tr><td>${esc(gateway)}</td><td class="muted small">—</td><td>—</td></tr>`;
+  return entries
+    .map(
+      ([k, ok], i) => `<tr>
+        ${i === 0 ? `<td rowspan="${entries.length}"><strong>${esc(gateway)}</strong></td>` : ''}
+        <td class="mono small">${esc(k)}</td>
+        <td>${ok ? '<span class="st st-completed">cargada</span>' : '<span class="st st-pending">falta</span>'}</td>
+      </tr>`
+    )
+    .join('');
+}
+
 async function tabPagos() {
   const [p, cfg] = await Promise.all([api('/providers'), api('/settings')]);
   const s = cfg.settings || {};
-  const modeBadge = (live) =>
+  const modeBadge = (live, fallbackLabel = 'Cobro manual') =>
     live
       ? '<span class="st st-completed">En vivo</span>'
-      : '<span class="st st-pending">Demostración</span>';
+      : `<span class="st st-pending">${fallbackLabel}</span>`;
 
   const switchRow = (key, label, desc, on) => `
     <div class="switch-row">
@@ -561,10 +763,11 @@ async function tabPagos() {
       <div class="panel-head"><h3>Pasarelas conectadas</h3></div>
       <div class="prov-grid">
         <div class="prov">
-          <div class="prov-top"><strong>dLocal Go</strong>${modeBadge(p.dlocalgo.live)}</div>
-          <div class="muted small">Tarjeta alojada y tarjeta transparente (SmartFields).</div>
-          <div class="small mt8">SmartFields: ${p.dlocalgo.smartfields ? 'configurado' : 'sin llave'}</div>
-          ${p.dlocalgo.demo_fallback ? '<div class="small mt8" style="color:var(--warn)">Fallback demo activo</div>' : ''}
+          <div class="prov-top"><strong>dLocal Go</strong>${modeBadge(p.dlocalgo.live, 'No conectada')}</div>
+          <div class="muted small">Tarjeta alojada (3D Secure).</div>
+          ${p.dlocalgo.live
+            ? '<div class="small mt8">Checkout de tarjeta operativo.</div>'
+            : '<div class="small mt8" style="color:var(--warn)">Sin credenciales: la tarjeta no se ofrece. El resto de vías cobra por transferencia con comprobante.</div>'}
         </div>
         <div class="prov">
           <div class="prov-top"><strong>BRE-B (Colombia)</strong>${modeBadge(p.breb.live)}</div>
@@ -605,7 +808,7 @@ async function tabPagos() {
         <label class="field"><span>Banco</span>
           <select class="input" data-set="ve_merchant_bank">
             <option value="">Selecciona…</option>
-            ${Object.entries(p.vepay.banks).map(([code, name]) => `<option value="${code}" ${String(s.ve_merchant_bank || p.vepay.merchant.bank) === code ? 'selected' : ''}>${code} · ${esc(name)}</option>`).join('')}
+            ${(Array.isArray(p.vepay.banks) ? p.vepay.banks : []).map((b) => `<option value="${esc(b.code)}" ${String(s.ve_merchant_bank || p.vepay.merchant.bank) === String(b.code) ? 'selected' : ''}>${esc(b.code)} · ${esc(b.name)}</option>`).join('')}
           </select>
         </label>
         <label class="field"><span>Número de cuenta</span><input class="input" data-set="ve_merchant_account" value="${esc(s.ve_merchant_account || p.vepay.merchant.account || '')}" placeholder="01340000000000000000" /></label>
@@ -614,18 +817,48 @@ async function tabPagos() {
     </div>
 
     <div class="panel mt16">
+      <div class="panel-head"><h3>Cuentas de recaudo (pago manual)</h3></div>
+      <p class="muted small">Estos son los datos reales que ve el cliente cuando la pasarela no está en vivo: transfiere aquí y sube el comprobante. El administrador aprueba el pago desde <b>Órdenes</b>.</p>
+      <div class="grid2 mt16">
+        <label class="field"><span>Pago Móvil · titular</span><input class="input" data-set="collect_ve_pago_movil_holder" value="${esc(s.collect_ve_pago_movil_holder || '')}" /></label>
+        <label class="field"><span>Pago Móvil · cédula / RIF</span><input class="input" data-set="collect_ve_pago_movil_id" value="${esc(s.collect_ve_pago_movil_id || '')}" /></label>
+        <label class="field"><span>Pago Móvil · teléfono</span><input class="input" data-set="collect_ve_pago_movil_phone" value="${esc(s.collect_ve_pago_movil_phone || '')}" placeholder="04141234567" /></label>
+        <label class="field"><span>Pago Móvil · banco</span><input class="input" data-set="collect_ve_pago_movil_bank" value="${esc(s.collect_ve_pago_movil_bank || '')}" placeholder="0102 - Banco de Venezuela" /></label>
+        <label class="field"><span>Transferencia VE · titular</span><input class="input" data-set="collect_ve_transfer_holder" value="${esc(s.collect_ve_transfer_holder || '')}" /></label>
+        <label class="field"><span>Transferencia VE · cédula / RIF</span><input class="input" data-set="collect_ve_transfer_id" value="${esc(s.collect_ve_transfer_id || '')}" /></label>
+        <label class="field"><span>Transferencia VE · banco</span><input class="input" data-set="collect_ve_transfer_bank" value="${esc(s.collect_ve_transfer_bank || '')}" /></label>
+        <label class="field"><span>Transferencia VE · cuenta</span><input class="input" data-set="collect_ve_transfer_account" value="${esc(s.collect_ve_transfer_account || '')}" placeholder="0102 0000 0000 0000 0000" /></label>
+        <label class="field"><span>Internacional · titular</span><input class="input" data-set="collect_intl_holder" value="${esc(s.collect_intl_holder || '')}" /></label>
+        <label class="field"><span>Internacional · banco</span><input class="input" data-set="collect_intl_bank" value="${esc(s.collect_intl_bank || '')}" /></label>
+        <label class="field"><span>Internacional · cuenta / IBAN</span><input class="input" data-set="collect_intl_account" value="${esc(s.collect_intl_account || '')}" /></label>
+        <label class="field"><span>Internacional · SWIFT</span><input class="input" data-set="collect_intl_swift" value="${esc(s.collect_intl_swift || '')}" /></label>
+        <label class="field"><span>Zelle</span><input class="input" data-set="collect_intl_zelle" value="${esc(s.collect_intl_zelle || '')}" /></label>
+        <label class="field"><span>Efectivo · instrucciones</span><input class="input" data-set="collect_cash_note" value="${esc(s.collect_cash_note || '')}" /></label>
+      </div>
+      <label class="field mt16"><span>Mensaje general para el pagador</span><input class="input" data-set="collect_instructions" value="${esc(s.collect_instructions || '')}" placeholder="Envía el monto exacto y sube el comprobante." /></label>
+      <button class="btn btn-primary mt16" id="col-go">Guardar cuentas de recaudo</button>
+    </div>
+
+    <div class="panel mt16">
       <div class="panel-head"><h3>Llaves y secretos</h3></div>
-      <p class="muted small">Por seguridad, las claves de las pasarelas (dLocal Go, BRE-B, PSE y Venezuela) se configuran en el archivo <code>.env</code> del servidor y nunca se muestran en el navegador. Al cambiarlas y reiniciar, las pasarelas pasan a modo «En vivo» automáticamente.</p>
+      <p class="muted small">Las claves de las pasarelas se configuran como variables de entorno del servidor (archivo <code>.env</code> o panel de Render) y nunca se muestran en el navegador. Aquí solo ves si cada una está cargada: en cuanto todas las de una pasarela están presentes, esa pasarela pasa a <b>En vivo</b> automáticamente.</p>
       <div class="tbl-wrap mt16">
         <table class="tbl">
-          <thead><tr><th>Pasarela</th><th>Variables en .env</th></tr></thead>
+          <thead><tr><th>Pasarela</th><th>Variable</th><th>Estado</th></tr></thead>
           <tbody>
-            <tr><td>dLocal Go</td><td class="mono small">DLOCALGO_API_KEY · DLOCALGO_API_SECRET · SMARTFIELDS_API_KEY</td></tr>
-            <tr><td>BRE-B</td><td class="mono small">BREB_MODE · BREB_API_URL · BREB_API_KEY</td></tr>
-            <tr><td>PSE</td><td class="mono small">PSE_MODE · PSE_API_URL · PSE_API_KEY</td></tr>
-            <tr><td>Venezuela</td><td class="mono small">VE_MODE · VE_API_URL · VE_API_KEY</td></tr>
+            ${envRows('dLocal Go', p.env?.dlocalgo)}
+            ${envRows('BRE-B', p.env?.breb)}
+            ${envRows('PSE', p.env?.pse)}
+            ${envRows('Venezuela (VES)', p.env?.vepay)}
           </tbody>
         </table>
+      </div>
+      <div class="notice notice-info mt16">
+        <strong>Cómo activar una pasarela en vivo</strong>
+        <div class="hint" style="margin-top:4px">
+          1) Carga las variables de la pasarela. 2) Reinicia el servicio. 3) Vuelve a esta pantalla: debe decir «En vivo».
+          Mientras falte una clave, los cobros de esa vía se hacen por <b>transferencia manual con comprobante</b> y tú apruebas el pago desde <b>Órdenes</b>.
+        </div>
       </div>
     </div>`;
 
@@ -637,6 +870,20 @@ async function tabPagos() {
     try {
       await api('/settings', { method: 'PUT', body: JSON.stringify(body) });
       toast('Vías de pago actualizadas.', 'ok');
+      renderTab();
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  });
+
+  $('#col-go')?.addEventListener('click', async () => {
+    const body = {};
+    document.querySelectorAll('[data-set]').forEach((el) => {
+      body[el.dataset.set] = el.value;
+    });
+    try {
+      await api('/settings', { method: 'PUT', body: JSON.stringify(body) });
+      toast('Cuentas de recaudo guardadas.', 'ok');
       renderTab();
     } catch (err) {
       toast(err.message, 'err');

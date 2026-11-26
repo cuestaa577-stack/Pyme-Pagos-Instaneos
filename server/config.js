@@ -163,7 +163,6 @@ const config = {
   },
 
   defaultCurrency: process.env.DEFAULT_CURRENCY || 'USD',
-  demoFallback: bool(process.env.DEMO_FALLBACK, true),
   isProd: (process.env.NODE_ENV || 'development') === 'production',
   trustProxy: bool(process.env.TRUST_PROXY, true),
 };

@@ -1,5 +1,7 @@
 'use strict';
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const { db, getSettings, audit } = require('../db');
 const config = require('../config');
 const cedula = require('../lib/cedula');
@@ -54,6 +56,16 @@ function validateDocument(document, country = 'VE') {
     return { valid: false, error: 'Documento de identidad inválido.' };
   }
   return { valid: true, type: 'DOC', normalized: raw.toUpperCase(), number: raw };
+}
+
+/**
+ * Número "limpio" del documento para enviarlo al proveedor. En Venezuela se
+ * usa la cédula sin tipo ni separadores; fuera de Venezuela se respeta el
+ * documento local (RUT, DNI, CUIT...) tal como lo escribió el cliente.
+ */
+function documentNumber(document, country = 'VE') {
+  if (String(country).toUpperCase() === 'VE') return cedula.parse(document)?.number || String(document || '');
+  return String(document || '').trim().toUpperCase();
 }
 
 function maskDocument(document, country = 'VE') {
@@ -178,8 +190,23 @@ function getBeneficiary(id) {
   };
 }
 
-function isDemoProviderError(err) {
-  return err && err.auth && config.demoFallback;
+/**
+ * Una vía sin credenciales reales no se simula: se deriva al cobro manual con
+ * comprobante (transferencia / Pago Móvil / efectivo verificados por el dueño).
+ */
+function isNotLiveError(err) {
+  return Boolean(err && (err.notLive || (err.auth && !config.dlocalgo.apiKey)));
+}
+
+/**
+ * Vías que se cobran de verdad fuera de la app (transferencia, Pago Móvil,
+ * depósito, Zelle). Si no hay proveedor en vivo, la orden queda en revisión
+ * manual: el cliente transfiere a la cuenta del negocio y sube el comprobante.
+ */
+const MANUAL_METHODS = ['breb', 'pse', 'cash', 've_pago_movil', 've_transfer', 've_cash'];
+
+function isManualProvider(provider) {
+  return provider === 'manual';
 }
 
 /** Vía de entrega por defecto: la del método si es válida en el destino. */
@@ -217,7 +244,6 @@ async function createOrder(input, { ip } = {}) {
   const settings = getSettings();
   const methodSwitch = {
     card: 'pay_card',
-    card_transparent: 'pay_card',
     pse: 'pay_pse',
     breb: 'pay_breb',
     cash: 'pay_cash',
@@ -227,6 +253,12 @@ async function createOrder(input, { ip } = {}) {
   }[input.method];
   if (methodSwitch && settings[methodSwitch] === '0') {
     throw badRequest('Esta vía de pago está desactivada temporalmente.');
+  }
+  // Sin credenciales reales no hay cobro con tarjeta: se pide elegir otra vía.
+  if (input.method === 'card' && !dlocalgo.isLive()) {
+    throw badRequest(
+      'El pago con tarjeta todavía no está habilitado. Elige transferencia, Pago Móvil o efectivo.'
+    );
   }
 
   const isVeMethod = VE_METHODS.includes(input.method);
@@ -252,7 +284,7 @@ async function createOrder(input, { ip } = {}) {
     email: input.email,
     phone: input.phone,
     document: input.document,
-    country: destinationCountry === 'VE' ? 'VE' : payerCountry,
+    country: payerCountry,
   });
 
   let beneficiaryId;
@@ -283,12 +315,11 @@ async function createOrder(input, { ip } = {}) {
   const metadata = {
     direction: input.direction === 'receive' ? 'receive' : 'send',
     payer_country: payerCountry,
-    payer_document_masked: maskDocument(input.document, destinationCountry === 'VE' ? 'VE' : payerCountry),
+    payer_document_masked: maskDocument(input.document, payerCountry),
     beneficiary_document_masked: maskDocument(input.beneficiaryDocument, destinationCountry),
     rail: input.rail || defaultRail(input.method, destinationCountry),
     key_type: input.keyType || null,
     breb_key_masked: input.brebKey ? `${String(input.brebKey).slice(0, 3)}***${String(input.brebKey).slice(-3)}` : null,
-    demo: false,
     provider_note: null,
   };
 
@@ -331,12 +362,21 @@ async function createOrder(input, { ip } = {}) {
     name: input.fullName,
     email: input.email || undefined,
     phone: input.phone || undefined,
-    document_type: 'CI',
-    document: cedula.parse(input.document)?.number || input.document,
+    document_type: payerCountry === 'VE' ? 'CI' : 'OTHER',
+    document: documentNumber(input.document, payerCountry),
   };
 
   try {
-    if (input.method === 'card' || input.method === 'card_transparent' || input.method === 'cash') {
+    if ((input.method === 'card' || input.method === 'cash') && !dlocalgo.isLive()) {
+      // Sin credenciales reales no se simula: el efectivo se cobra con las
+      // instrucciones del negocio y comprobante.
+      provider = 'manual';
+      checkoutUrl = `/pay/manual/${pid}`;
+      status = 'pending';
+      metadata.manual = true;
+      metadata.manual_rail = input.method;
+      metadata.provider_note = 'Cobro manual: paga en efectivo y sube el comprobante.';
+    } else if (input.method === 'card' || input.method === 'cash') {
       const payload = {
         amount: toMajor(q.total_cents, currency),
         currency,
@@ -349,18 +389,24 @@ async function createOrder(input, { ip } = {}) {
         payer,
         payment_type: input.method === 'cash' ? 'VOUCHER' : 'CREDIT_CARD,DEBIT_CARD',
       };
-      if (input.method === 'card_transparent') payload.allow_transparent = true;
       if (input.method === 'card') payload.allow_3ds = true;
       const payment = await dlocalgo.createPayment(payload);
       providerRef = payment.providerRef;
       checkoutUrl = payment.checkoutUrl;
       checkoutToken = payment.checkoutToken;
       status = payment.status;
+    } else if (input.method === 'pse' && !pse.isLive()) {
+      provider = 'manual';
+      checkoutUrl = `/pay/manual/${pid}`;
+      status = 'pending';
+      metadata.manual = true;
+      metadata.manual_rail = 'pse';
+      metadata.provider_note = 'Cobro manual: transferencia a la cuenta del negocio con comprobante.';
     } else if (input.method === 'pse') {
       const session = await pse.createSession({
         amountCents: q.total_cents,
         currency,
-        document: cedula.parse(input.document)?.number,
+        document: documentNumber(input.document, payerCountry),
         name: input.fullName,
         email: input.email,
         bankCode: input.bankCode,
@@ -372,9 +418,24 @@ async function createOrder(input, { ip } = {}) {
       checkoutUrl = session.redirectUrl;
       status = session.status;
     } else if (input.method === 'breb') {
-      provider = breb.isLive() ? 'breb' : 'breb_simulator';
-      checkoutUrl = `/pay/breb/${pid}`;
+      if (breb.isLive()) {
+        provider = 'breb';
+        checkoutUrl = `/pay/breb/${pid}`;
+      } else {
+        provider = 'manual';
+        checkoutUrl = `/pay/manual/${pid}`;
+        metadata.manual = true;
+        metadata.manual_rail = 'breb';
+        metadata.provider_note = 'Cobro manual: el cliente transfiere y sube el comprobante.';
+      }
       status = 'pending';
+    } else if (isVeMethod && !vepay.isLive()) {
+      provider = 'manual';
+      checkoutUrl = `/pay/manual/${pid}`;
+      status = 'pending';
+      metadata.manual = true;
+      metadata.manual_rail = METHOD_TO_VE_RAIL[input.method];
+      metadata.provider_note = 'Cobro manual: Pago Móvil / transferencia con comprobante.';
     } else if (isVeMethod) {
       const collection = await vepay.createCollection({
         amountCents: q.total_cents,
@@ -382,7 +443,7 @@ async function createOrder(input, { ip } = {}) {
         rail: METHOD_TO_VE_RAIL[input.method],
         reference: oid,
         payerName: input.fullName,
-        payerDocument: cedula.parse(input.document)?.number,
+        payerDocument: documentNumber(input.document, payerCountry),
         payerPhone: input.phone,
         bankCode: input.payerBank || input.bankCode,
         description,
@@ -393,19 +454,25 @@ async function createOrder(input, { ip } = {}) {
       status = collection.status || 'pending';
       metadata.payment_code = collection.paymentCode || null;
       metadata.instructions = collection.instructions || null;
+    } else {
+      // Métodos locales (Webpay, Mercado Pago, Nequi, Yape, SPEI, Zelle…) sin
+      // adaptador propio: se cobran por transferencia a la cuenta del negocio y
+      // el cliente sube el comprobante. Dinero real, sin simulación.
+      provider = 'manual';
+      checkoutUrl = `/pay/manual/${pid}`;
+      status = 'pending';
+      metadata.manual = true;
+      metadata.manual_rail = input.method;
+      metadata.provider_note = 'Cobro manual: transferencia a la cuenta del negocio con comprobante.';
     }
   } catch (err) {
-    if (isDemoProviderError(err)) {
-      provider = 'demo';
-      checkoutUrl =
-        input.method === 'pse'
-          ? `/pay/pse/${pid}`
-          : isVeMethod
-            ? `/pay/ve/${pid}`
-            : `/pay/demo/${pid}`;
+    if (isNotLiveError(err) && MANUAL_METHODS.includes(input.method)) {
+      provider = 'manual';
+      checkoutUrl = `/pay/manual/${pid}`;
       status = 'pending';
-      metadata.demo = true;
-      metadata.provider_note = 'dLocal Go rechazó las credenciales configuradas; operación en modo demostración.';
+      metadata.manual = true;
+      metadata.manual_rail = METHOD_TO_VE_RAIL[input.method] || input.method;
+      metadata.provider_note = 'Cobro manual: el cliente transfiere a la cuenta del negocio y sube el comprobante.';
     } else {
       db.prepare(
         `UPDATE transactions SET status = 'failed', metadata = ?, updated_at = datetime('now') WHERE id = ?`
@@ -439,7 +506,9 @@ function getOrder(publicIdValue) {
       `SELECT t.*, c.full_name AS customer_name, c.doc_type, c.doc_last4, c.email AS customer_email,
               c.phone AS customer_phone, b.full_name AS beneficiary_name, b.doc_type AS beneficiary_doc_type,
               b.doc_last4 AS beneficiary_doc_last4, b.rail, b.bank_name, b.bank_code, b.breb_key,
-              b.phone AS beneficiary_phone
+              b.phone AS beneficiary_phone,
+              (SELECT p.status FROM payouts p WHERE p.transaction_id = t.id ORDER BY p.id DESC LIMIT 1) AS payout_status,
+              (SELECT p.public_id FROM payouts p WHERE p.transaction_id = t.id ORDER BY p.id DESC LIMIT 1) AS payout_public_id
        FROM transactions t
        LEFT JOIN customers c ON c.id = t.customer_id
        LEFT JOIN beneficiaries b ON b.id = t.beneficiary_id
@@ -503,9 +572,9 @@ async function settlePayment(publicIdValue, { status, providerRef, source = 'sys
 }
 
 /**
- * Entrega automática al beneficiario. En modo demostración se completa al
- * instante por BRE-B / Pago Móvil. En producción queda registrada y el
- * administrador la ejecuta contra el riel configurado.
+ * Entrega automática al beneficiario. Si el riel de destino tiene credenciales
+ * reales se envía en el acto; si no, la entrega queda pendiente y el
+ * administrador la marca como pagada cuando hace la transferencia.
  */
 async function maybeAutoDisburse(transactionId) {
   const settings = getSettings();
@@ -517,37 +586,52 @@ async function maybeAutoDisburse(transactionId) {
   const existing = db.prepare('SELECT * FROM payouts WHERE transaction_id = ?').get(transactionId);
   if (existing) return existing;
 
-  const isDemo =
-    t.provider === 'demo' ||
-    t.provider === 'breb_simulator' ||
-    t.provider === 'pse_simulator' ||
-    t.provider === 'vepay_simulator';
-  if (!isDemo) return null;
-
+  // Cobro manual: el dinero ya entró a la cuenta del negocio (el administrador
+  // verificó el comprobante). La entrega se registra igual, pero si el riel de
+  // destino no tiene credenciales reales queda PENDIENTE para que el dueño la
+  // ejecute y la marque como pagada desde el panel.
+  const isManual = t.provider === 'manual';
   const isVes = t.destination_currency === 'VES';
-  let payoutProvider = 'breb_simulator';
-  let payoutRef = `BREB-SIM-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
-  let payoutStatus = 'completed';
-  if (isVes) {
-    const rail = b.rail === 'transfer_ve' || b.rail === 'cash_ve' ? b.rail : 'pago_movil_ve';
+  const railLive = isVes ? vepay.isLive() : t.destination_currency === 'COP' ? breb.isLive() : false;
+
+  let payoutProvider = isManual || !railLive ? 'manual' : isVes ? 'vepay' : 'breb';
+  let payoutRef = null;
+  let payoutStatus = railLive && !isManual ? 'processing' : 'pending';
+
+  if (railLive && !isManual) {
     try {
-      const sent = await vepay.sendPayout({
-        amountCents: t.destination_amount_cents,
-        currency: 'VES',
-        rail,
-        reference: t.order_id,
-        beneficiaryName: b.full_name,
-        beneficiaryDocument: b.doc_number,
-        phone: b.phone || b.breb_key,
-        bankCode: b.bank_code,
-        description: `Entrega automática de ${t.public_id}`,
-      });
+      const sent = isVes
+        ? await vepay.sendPayout({
+            amountCents: t.destination_amount_cents,
+            currency: 'VES',
+            rail: b.rail === 'transfer_ve' || b.rail === 'cash_ve' ? b.rail : 'pago_movil_ve',
+            reference: t.order_id,
+            beneficiaryName: b.full_name,
+            beneficiaryDocument: b.doc_number,
+            phone: b.phone || b.breb_key,
+            bankCode: b.bank_code,
+            description: `Entrega automática de ${t.public_id}`,
+          })
+        : await breb.sendTransfer({
+            amountCents: t.destination_amount_cents,
+            currency: 'COP',
+            keyType: 'cedula',
+            keyValue: b.breb_key || b.doc_number,
+            beneficiaryName: b.full_name,
+            documentType: 'CC',
+            documentNumber: b.doc_number,
+            reference: t.order_id,
+            description: `Entrega automática de ${t.public_id}`,
+          });
       payoutProvider = sent.provider;
       payoutRef = sent.providerRef;
       payoutStatus = sent.status === 'completed' ? 'completed' : 'processing';
     } catch (err) {
-      payoutProvider = 'vepay_simulator';
-      payoutStatus = 'failed';
+      // El riel estaba en vivo pero falló: queda pendiente para reintento manual.
+      payoutProvider = isVes ? 'vepay' : 'breb';
+      payoutStatus = 'pending';
+      payoutRef = null;
+      console.error('[disburse] fallo al entregar', t.public_id, err.message);
     }
   }
 
@@ -576,6 +660,12 @@ async function maybeAutoDisburse(transactionId) {
       })
     );
   const payoutId = Number(info.lastInsertRowid);
+
+  if (payoutStatus !== 'completed') {
+    // Todavía no salió dinero: no tocamos el ledger ni damos la orden por
+    // completada. Queda registrada la entrega pendiente en el panel.
+    return db.prepare('SELECT * FROM payouts WHERE id = ?').get(payoutId);
+  }
 
   const payoutCurrency = t.destination_currency || t.currency;
   const payoutCents = t.destination_amount_cents || t.net_cents;
@@ -753,8 +843,172 @@ function listOrders({ status, query, limit = 50, offset = 0 } = {}) {
       ...r,
       metadata: parseJson(r.metadata),
       amount_formatted: format(r.amount_cents, r.currency),
+      destination_amount_formatted: r.destination_amount_cents
+        ? format(r.destination_amount_cents, r.destination_currency)
+        : null,
     })),
   };
+}
+
+
+/* ------------------------------------------------------------------ *
+ * Comprobantes de pago (vías manuales)
+ * ------------------------------------------------------------------ */
+
+const PROOF_DIR = path.join(config.dataDir, 'proofs');
+const PROOF_MIMES = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'application/pdf': 'pdf',
+};
+
+function ensureProofDir() {
+  try {
+    fs.mkdirSync(PROOF_DIR, { recursive: true });
+  } catch (err) {
+    console.error(`[proofs] no se pudo crear ${PROOF_DIR}: ${err.message}`);
+  }
+}
+
+function listProofs(transactionId) {
+  return db
+    .prepare('SELECT * FROM payment_proofs WHERE transaction_id = ? ORDER BY id DESC')
+    .all(transactionId);
+}
+
+function attachProof(publicIdValue, { buffer, mime, originalName, reference, note, ip } = {}) {
+  const order = getOrder(publicIdValue);
+  if (!order) throw badRequest('Orden no encontrada.');
+  if (!['pending', 'processing'].includes(order.status)) {
+    throw badRequest(`La orden ya está ${order.status}; no admite más comprobantes.`);
+  }
+  if (order.provider !== 'manual') {
+    throw badRequest('Esta orden se paga por pasarela; no necesitas subir comprobante.');
+  }
+  const type = String(mime || '').split(';')[0].toLowerCase();
+  const ext = PROOF_MIMES[type];
+  if (!ext) throw badRequest('Sube una imagen (JPG, PNG, WEBP) o un PDF del comprobante.');
+  if (!buffer || !buffer.length) throw badRequest('El archivo del comprobante está vacío.');
+  if (buffer.length > 8 * 1024 * 1024) throw badRequest('El comprobante no puede pasar de 8 MB.');
+
+  ensureProofDir();
+  const fileName = `${order.public_id}-${Date.now()}.${ext}`;
+  fs.writeFileSync(path.join(PROOF_DIR, fileName), buffer);
+
+  const info = db
+    .prepare(
+      `INSERT INTO payment_proofs (transaction_id, file_name, original_name, mime, size_bytes, reference, note)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      order.id,
+      fileName,
+      String(originalName || fileName).slice(0, 180),
+      type,
+      buffer.length,
+      String(reference || '').slice(0, 120) || null,
+      String(note || '').slice(0, 500) || null
+    );
+
+  const metadata = {
+    ...order.metadata,
+    proof_status: 'pending',
+    proof_reference: reference || null,
+    proof_uploaded_at: new Date().toISOString(),
+  };
+  // Un comprobante nuevo limpia el rechazo anterior.
+  delete metadata.rejection_reason;
+  delete metadata.rejected_by;
+  delete metadata.rejected_at;
+  delete metadata.requires_new_proof;
+  db.prepare(
+    `UPDATE transactions SET metadata = ?, updated_at = datetime('now') WHERE id = ?`
+  ).run(JSON.stringify(metadata), order.id);
+
+  audit({
+    actor: 'customer',
+    action: 'proof.upload',
+    entity: 'transaction',
+    entityId: order.public_id,
+    ip,
+    metadata: { proof_id: Number(info.lastInsertRowid), reference: reference || null, size: buffer.length },
+  });
+
+  return {
+    proof: db.prepare('SELECT * FROM payment_proofs WHERE id = ?').get(Number(info.lastInsertRowid)),
+    order: getOrder(publicIdValue),
+  };
+}
+
+function proofFile(proofId) {
+  const row = db.prepare('SELECT * FROM payment_proofs WHERE id = ?').get(Number(proofId));
+  if (!row || !row.file_name) return null;
+  const full = path.join(PROOF_DIR, row.file_name);
+  if (!fs.existsSync(full)) return null;
+  return { ...row, path: full };
+}
+
+async function reviewProof(publicIdValue, { action, actor = 'admin', ip, note } = {}) {
+  const order = getOrder(publicIdValue);
+  if (!order) throw badRequest('Orden no encontrada.');
+  if (!['pending', 'processing'].includes(order.status)) {
+    throw badRequest(`La orden ya está ${order.status}.`);
+  }
+  if (!['approve', 'reject'].includes(action)) throw badRequest('Acción inválida.');
+
+  const proof = db
+    .prepare("SELECT * FROM payment_proofs WHERE transaction_id = ? AND status = 'pending' ORDER BY id DESC")
+    .get(order.id);
+
+  const status = action === 'approve' ? 'approved' : 'rejected';
+  if (proof) {
+    db.prepare(
+      `UPDATE payment_proofs SET status = ?, reviewed_by = ?, reviewed_at = datetime('now'), review_note = ?
+       WHERE id = ?`
+    ).run(status, actor, String(note || '').slice(0, 500) || null, proof.id);
+  }
+
+  if (action === 'approve') {
+    const updated = await settlePayment(order.public_id, {
+      status: 'APPROVED',
+      providerRef: `MANUAL-${order.public_id}`,
+      source: `admin:${actor}`,
+    });
+    audit({
+      actor,
+      action: 'order.manual_approve',
+      entity: 'transaction',
+      entityId: order.public_id,
+      ip,
+      metadata: { proof_id: proof ? proof.id : null, note: note || null },
+    });
+    return updated;
+  }
+
+  // Rechazar un comprobante NO cancela la orden: el cliente puede subir otro.
+  // Así no se pierde la venta por una foto borrosa o un monto mal escrito.
+  const metadata = {
+    ...order.metadata,
+    proof_status: 'rejected',
+    rejection_reason: String(note || 'Comprobante no válido.').slice(0, 300),
+    rejected_by: actor,
+    rejected_at: new Date().toISOString(),
+    requires_new_proof: true,
+  };
+  db.prepare(
+    `UPDATE transactions SET metadata = ?, updated_at = datetime('now') WHERE id = ?`
+  ).run(JSON.stringify(metadata), order.id);
+  audit({
+    actor,
+    action: 'order.manual_reject',
+    entity: 'transaction',
+    entityId: order.public_id,
+    ip,
+    metadata: { proof_id: proof ? proof.id : null, note: note || null },
+  });
+  return getOrder(publicIdValue);
 }
 
 module.exports = {
@@ -771,4 +1025,12 @@ module.exports = {
   getBeneficiary,
   upsertCustomer,
   parseJson,
+  validateDocument,
+  documentNumber,
+  MANUAL_METHODS,
+  isManualProvider,
+  attachProof,
+  listProofs,
+  proofFile,
+  reviewProof,
 };

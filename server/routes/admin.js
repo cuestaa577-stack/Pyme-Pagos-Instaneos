@@ -14,6 +14,7 @@ const backup = require('../services/backup');
 const breb = require('../providers/breb');
 const pse = require('../providers/pse');
 const vepay = require('../providers/vepay');
+const dlocalgo = require('../providers/dlocalgo');
 const {
   loginSchema,
   withdrawalSchema,
@@ -125,7 +126,33 @@ router.get('/orders/:id', (req, res) => {
   const order = orders.getOrder(req.params.id) || orders.getOrderById(Number(req.params.id));
   if (!order) return res.status(404).json({ error: 'Orden no encontrada.' });
   const payout = db.prepare('SELECT * FROM payouts WHERE transaction_id = ?').get(order.id);
-  res.json({ order, payout: payout ? payouts.serialize(payout) : null });
+  const proofs = orders.listProofs(order.id);
+  res.json({ order: { ...order, proofs }, payout: payout ? payouts.serialize(payout) : null });
+});
+
+/** Descarga el archivo de un comprobante (solo administradores). */
+router.get('/proofs/:id/file', (req, res) => {
+  const file = orders.proofFile(Number(req.params.id));
+  if (!file) return res.status(404).json({ error: 'Comprobante no encontrado.' });
+  res.setHeader('Content-Type', file.mime || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `inline; filename="${file.file_name}"`);
+  res.sendFile(file.path);
+});
+
+/** Aprueba o rechaza el pago manual de una orden. */
+router.post('/orders/:id/review', async (req, res, next) => {
+  try {
+    const action = String(req.body?.action || '').toLowerCase();
+    const updated = await orders.reviewProof(req.params.id, {
+      action,
+      actor: req.admin.email,
+      ip: req.ip,
+      note: req.body?.note,
+    });
+    res.json({ order: updated });
+  } catch (err) {
+    next(err);
+  }
 });
 
 router.post('/orders/:id/refund', async (req, res, next) => {
@@ -191,6 +218,19 @@ router.post('/withdrawals', async (req, res, next) => {
   }
 });
 
+router.post('/withdrawals/:id/paid', (req, res, next) => {
+  try {
+    const result = withdrawals.markPaid(req.params.id, {
+      reference: req.body?.reference,
+      actor: req.admin.email,
+      ip: req.ip,
+    });
+    res.json({ withdrawal: result });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/payouts', (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 50, 200);
   const offset = Number(req.query.offset) || 0;
@@ -202,6 +242,19 @@ router.post('/payouts', async (req, res, next) => {
     const data = parse(payoutSchema, req.body || {});
     const result = await payouts.createInstantPayout({ ...data, actor: req.admin.email, ip: req.ip });
     res.status(201).json({ payout: result });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/payouts/:id/paid', (req, res, next) => {
+  try {
+    const result = payouts.markPaid(req.params.id, {
+      reference: req.body?.reference,
+      actor: req.admin.email,
+      ip: req.ip,
+    });
+    res.json({ payout: result });
   } catch (err) {
     next(err);
   }
@@ -266,20 +319,35 @@ const EDITABLE_SETTINGS = new Set([
   'pay_breb',
   'pay_cash',
   'pay_ve',
+  'collect_ve_pago_movil_holder',
+  'collect_ve_pago_movil_id',
+  'collect_ve_pago_movil_phone',
+  'collect_ve_pago_movil_bank',
+  'collect_ve_transfer_holder',
+  'collect_ve_transfer_id',
+  'collect_ve_transfer_bank',
+  'collect_ve_transfer_account',
+  'collect_intl_holder',
+  'collect_intl_bank',
+  'collect_intl_account',
+  'collect_intl_swift',
+  'collect_intl_zelle',
+  'collect_cash_note',
+  'collect_instructions',
+  'manual_review',
 ]);
 
 /**
  * Estado de las pasarelas y datos públicos del comercio (sin secretos).
  * Permite al propietario ver, desde el panel, qué vías están en vivo y cuáles
- * en modo demostración, y editar los datos de recaudo en Venezuela.
+ * operan por cobro manual con comprobante, y editar los datos de recaudo.
  */
 router.get('/providers', (req, res) => {
   const s = getSettings();
   res.json({
     dlocalgo: {
-      mode: config.dlocalgo.apiKey ? 'live' : 'demo',
-      live: Boolean(config.dlocalgo.apiKey) && !config.demoFallback,
-      demo_fallback: config.demoFallback,
+      mode: dlocalgo.isLive() ? 'live' : 'off',
+      live: dlocalgo.isLive(),
       smartfields: Boolean(config.smartfields.apiKey),
     },
     breb: { mode: breb.mode(), live: breb.isLive(), merchant_key: s.breb_merchant_key },
@@ -290,6 +358,32 @@ router.get('/providers', (req, res) => {
       merchant: vepay.merchantInfo(s),
       banks: vepay.BANKS,
       rails: vepay.RAILS,
+    },
+    // Estado de configuración de cada credencial (nunca el valor).
+    env: {
+      dlocalgo: {
+        DLOCALGO_API_URL: Boolean(config.dlocalgo.apiUrl),
+        DLOCALGO_API_KEY: Boolean(config.dlocalgo.apiKey),
+        DLOCALGO_API_SECRET: Boolean(config.dlocalgo.apiSecret),
+        DLOCALGO_WEBHOOK_SECRET: Boolean(config.dlocalgo.webhookSecret),
+        SMARTFIELDS_API_KEY: Boolean(config.smartfields.apiKey),
+      },
+      breb: {
+        BREB_API_URL: Boolean(config.breb.apiUrl),
+        BREB_API_KEY: Boolean(config.breb.apiKey),
+        BREB_PARTICIPANT_ID: Boolean(config.breb.participantId),
+      },
+      pse: {
+        PSE_API_URL: Boolean(config.pse.apiUrl),
+        PSE_API_KEY: Boolean(config.pse.apiKey),
+        PSE_MERCHANT_ID: Boolean(config.pse.merchantId),
+      },
+      vepay: {
+        VE_API_URL: Boolean(config.vepay.apiUrl),
+        VE_API_KEY: Boolean(config.vepay.apiKey),
+        VE_MERCHANT_PHONE: Boolean(s.ve_merchant_phone),
+        VE_MERCHANT_ACCOUNT: Boolean(s.ve_merchant_account),
+      },
     },
     switches: {
       card: s.pay_card !== '0',

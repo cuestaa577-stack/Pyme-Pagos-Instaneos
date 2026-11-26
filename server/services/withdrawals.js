@@ -86,19 +86,14 @@ async function createWithdrawal({
       ? amountCents
       : pricing.convertMinor(amountCents, currency, destinationCurrency);
   const railValue = isVes ? veRail : 'breb';
-  const providerName = isVes
-    ? vepay.isLive()
-      ? 'vepay'
-      : 'vepay_simulator'
-    : breb.isLive()
-      ? 'breb'
-      : 'breb_simulator';
+  const railLive = isVes ? vepay.isLive() : breb.isLive();
+  const providerName = railLive ? (isVes ? 'vepay' : 'breb') : 'manual';
   const pid = publicId();
   const info = db
     .prepare(
       `INSERT INTO withdrawals (public_id, amount_cents, fee_cents, currency, rail, destination_key,
         destination_name, bank_name, status, provider, idempotency_key, metadata)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       pid,
@@ -109,6 +104,7 @@ async function createWithdrawal({
       key.normalized,
       destinationName || null,
       bankName || null,
+      railLive ? 'processing' : 'pending',
       providerName,
       idempotencyKey || null,
       JSON.stringify({
@@ -119,6 +115,18 @@ async function createWithdrawal({
       })
     );
   const withdrawalId = Number(info.lastInsertRowid);
+
+  if (!railLive) {
+    audit({
+      actor,
+      action: 'withdrawal.manual_pending',
+      entity: 'withdrawal',
+      entityId: pid,
+      ip,
+      metadata: { amount: amountCents, fee: feeCents, currency, rail: railValue, key_type: key.type },
+    });
+    return serialize(db.prepare('SELECT * FROM withdrawals WHERE id = ?').get(withdrawalId));
+  }
 
   try {
     const transfer = isVes
@@ -213,4 +221,43 @@ function getWithdrawal(publicIdValue) {
   return row ? serialize(row) : null;
 }
 
-module.exports = { createWithdrawal, listWithdrawals, getWithdrawal, serialize };
+
+/**
+ * Marca un retiro como pagado cuando el dueño lo ejecuta por fuera. Asienta
+ * el débito del saldo y deja el retiro cerrado.
+ */
+function markPaid(publicIdValue, { reference, actor = 'admin', ip } = {}) {
+  const row = db.prepare('SELECT * FROM withdrawals WHERE public_id = ?').get(publicIdValue);
+  if (!row) throw new Error('Retiro no encontrado.');
+  if (row.status === 'completed') return serialize(row);
+  if (!['pending', 'processing', 'failed'].includes(row.status)) {
+    throw new Error(`No se puede marcar como pagado un retiro en estado ${row.status}.`);
+  }
+  const meta = row.metadata ? JSON.parse(row.metadata) : {};
+  db.prepare(
+    `UPDATE withdrawals SET status = 'completed', provider = 'manual', provider_ref = ?, error = NULL,
+     completed_at = datetime('now'), metadata = ?, updated_at = datetime('now') WHERE id = ?`
+  ).run(
+    reference || `MANUAL-${row.public_id}`,
+    JSON.stringify({ ...meta, marked_paid_by: actor, marked_paid_at: new Date().toISOString(), manual_reference: reference || null }),
+    row.id
+  );
+  ledger.debitWithdrawal({
+    withdrawalId: row.id,
+    amountCents: row.amount_cents,
+    feeCents: row.fee_cents,
+    currency: row.currency,
+    description: `Retiro manual ${row.public_id}`,
+  });
+  audit({
+    actor,
+    action: 'withdrawal.mark_paid',
+    entity: 'withdrawal',
+    entityId: row.public_id,
+    ip,
+    metadata: { reference: reference || null, amount: row.amount_cents, currency: row.currency },
+  });
+  return serialize(db.prepare('SELECT * FROM withdrawals WHERE id = ?').get(row.id));
+}
+
+module.exports = { createWithdrawal, listWithdrawals, getWithdrawal, serialize, markPaid };

@@ -6,7 +6,7 @@
  */
 'use strict';
 
-const VERSION = 'remesaya-v3';
+const VERSION = 'remesaya-v4';
 const SHELL = `${VERSION}-shell`;
 const RUNTIME = `${VERSION}-runtime`;
 
@@ -23,6 +23,8 @@ const SHELL_ASSETS = [
   '/icons/icon-512.png',
   '/icons/apple-touch-icon.png',
   '/icons/favicon.png',
+  '/icons/favicon-32.png',
+  '/icons/logo-mark.png',
   '/img/hero-ve.jpg',
 ];
 

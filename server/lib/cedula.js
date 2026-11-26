@@ -5,9 +5,13 @@
  * Tipos:
  *  V = venezolano (6 a 9 dígitos)
  *  E = extranjero residente (6 a 9 dígitos)
- *  J = persona jurídica (8 a 10 dígitos)
+ *  J = persona jurídica / RIF (8 a 10 dígitos)
  *  G = ente gubernamental (8 a 10 dígitos)
  *  P = pasaporte (6 a 12 caracteres alfanuméricos)
+ *
+ * El usuario escribe la cédula de muchas formas: "V-12.345.678",
+ * "v12345678", "12.345.678", "V 12 345 678". Todas deben funcionar. Si no
+ * escribe la letra asumimos V (cédula de venezolano), que es el caso normal.
  *
  * Nota: la cédula venezolana no expone públicamente un dígito verificador
  * calculable, por lo que esta función valida estructura, tipo y longitud.
@@ -22,37 +26,48 @@ const RULES = {
   P: { min: 6, max: 12, digits: false, label: 'Pasaporte' },
 };
 
+/** Deja solo letras y números en mayúscula y separa el tipo del número. */
+function split(input) {
+  const raw = String(input == null ? '' : input).trim().toUpperCase();
+  // Quitamos puntos, guiones, espacios, barras y cualquier otro separador.
+  const clean = raw.replace(/[^A-Z0-9]/g, '');
+  if (!clean) return { type: '', number: '' };
+  const m = clean.match(/^([VEJGP])([0-9A-Z]+)$/);
+  if (m) return { type: m[1], number: m[2] };
+  return { type: '', number: clean };
+}
+
 function normalize(input) {
-  if (input === null || input === undefined) return '';
-  let s = String(input).trim().toUpperCase().replace(/\s+/g, '');
-  s = s.replace(/[^VEJGP0-9-]/g, '');
-  let type = '';
-  const m = s.match(/^([VEJGP])-?([0-9A-Z]+)$/);
-  if (m) {
-    type = m[1];
-    s = m[2];
-  } else {
-    s = s.replace(/-/g, '');
-  }
-  s = s.replace(/-/g, '');
-  return type ? `${type}-${s}` : s;
+  const { type, number } = split(input);
+  if (!number) return '';
+  if (type) return `${type}-${number}`;
+  // Sin letra: si son solo dígitos es una cédula de venezolano.
+  if (/^\d+$/.test(number)) return `V-${number}`;
+  return number;
 }
 
 function parse(input) {
-  const normalized = normalize(input);
-  const m = normalized.match(/^([VEJGP])-([0-9A-Z]+)$/);
-  if (!m) return null;
-  return { type: m[1], number: m[2], normalized };
+  const { type, number } = split(input);
+  if (!number) return null;
+  let t = type;
+  if (!t) t = /^\d+$/.test(number) ? 'V' : 'P';
+  return { type: t, number, normalized: `${t}-${number}` };
 }
 
 function validate(input) {
   const parsed = parse(input);
   if (!parsed) {
-    return { valid: false, error: 'Formato inválido. Usa por ejemplo V-12345678.' };
+    return { valid: false, error: 'Escribe tu cédula. Ejemplo: V-12345678.' };
   }
   const rule = RULES[parsed.type];
+  if (!rule) {
+    return { valid: false, error: 'Tipo de documento no reconocido. Usa V, E, J, G o P.' };
+  }
   if (rule.digits && !/^\d+$/.test(parsed.number)) {
-    return { valid: false, error: `La cédula tipo ${parsed.type} solo admite números.` };
+    return {
+      valid: false,
+      error: `La cédula tipo ${parsed.type} solo admite números (sin letras).`,
+    };
   }
   if (!rule.digits && !/^[0-9A-Z]+$/.test(parsed.number)) {
     return { valid: false, error: 'El pasaporte solo admite letras y números.' };

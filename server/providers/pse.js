@@ -17,12 +17,24 @@ const { toMajor } = require('../lib/money');
 function mode() {
   if (config.pse.mode === 'simulator') return 'simulator';
   if (config.pse.mode === 'live') return 'live';
-  return config.pse.apiUrl && config.pse.apiKey ? 'live' : 'simulator';
+  return config.pse.apiUrl && config.pse.apiKey ? 'live' : 'manual';
 }
 
 function isLive() {
   return mode() === 'live';
 }
+
+/**
+ * Error de vía no habilitada. No existe ningún modo simulado: si el riel no
+ * tiene credenciales reales, la orden se deriva al cobro manual con comprobante.
+ */
+function notLiveError(label) {
+  const err = new Error(`${label} no está habilitado con credenciales reales.`);
+  err.notLive = true;
+  err.rail = label;
+  return err;
+}
+
 
 const BANKS = [
   { code: '1007', name: 'Bancolombia' },
@@ -53,16 +65,7 @@ async function createSession({
   reference,
   description,
 }) {
-  if (!isLive()) {
-    const suffix = crypto.randomBytes(5).toString('hex').toUpperCase();
-    return {
-      provider: 'pse_simulator',
-      providerRef: `PSE-SIM-${suffix}`,
-      status: 'pending',
-      redirectUrl: `/pay/pse/${suffix}`,
-      raw: { simulated: true, amount: toMajor(amountCents, currency), currency, bank_code: bankCode },
-    };
-  }
+  if (!isLive()) throw notLiveError('PSE');
 
   const res = await fetch(`${config.pse.apiUrl}/sessions`, {
     method: 'POST',

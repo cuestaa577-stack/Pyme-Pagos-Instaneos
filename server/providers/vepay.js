@@ -21,16 +21,30 @@ const crypto = require('crypto');
 const config = require('../config');
 const { toMinor, toMajor } = require('../lib/money');
 
-function mode() {
-  return (config.vepay?.mode || 'auto').toLowerCase();
-}
-
 function isLive() {
-  const m = mode();
+  const m = (config.vepay?.mode || 'auto').toLowerCase();
   if (m === 'live') return true;
-  if (m === 'simulator' || m === 'demo') return false;
+  if (m === 'simulator' || m === 'demo' || m === 'manual') return false;
   return Boolean(config.vepay?.apiUrl && config.vepay?.apiKey);
 }
+
+function mode() {
+  const m = (config.vepay?.mode || 'auto').toLowerCase();
+  if (m === 'auto') return isLive() ? 'live' : 'manual';
+  return m;
+}
+
+/**
+ * Error de vía no habilitada. No existe ningún modo simulado: si el riel no
+ * tiene credenciales reales, la orden se deriva al cobro manual con comprobante.
+ */
+function notLiveError(label) {
+  const err = new Error(`${label} no está habilitado con credenciales reales.`);
+  err.notLive = true;
+  err.rail = label;
+  return err;
+}
+
 
 const RAILS = {
   pago_movil_ve: 'Pago Móvil',
@@ -171,19 +185,7 @@ async function createCollection({
     merchant: merchantInfo(),
   };
 
-  if (!isLive()) {
-    const code = String(Math.floor(100000 + Math.random() * 899999));
-    return {
-      provider: 'vepay_simulator',
-      providerRef: reference('VE-SIM'),
-      status: 'pending',
-      instant: true,
-      redirectUrl: `/pay/ve/${referenceValue}`,
-      paymentCode: code,
-      instructions: { ...base, payment_code: code },
-      raw: { simulated: true },
-    };
-  }
+  if (!isLive()) throw notLiveError('El cobro en Venezuela');
 
   const payload = {
     amount,
@@ -240,19 +242,7 @@ async function sendPayout({
     throw new Error('Selecciona el banco destino.');
   }
 
-  if (!isLive()) {
-    return {
-      provider: 'vepay_simulator',
-      providerRef: reference('VEP-SIM'),
-      status: 'completed',
-      instant: true,
-      trackingCode: reference('VETRK'),
-      amount,
-      currency,
-      rail: normalizedRail,
-      raw: { simulated: true, reference: referenceValue },
-    };
-  }
+  if (!isLive()) throw notLiveError('La entrega en Venezuela');
 
   const payload = {
     amount,
@@ -283,9 +273,7 @@ async function sendPayout({
 }
 
 async function verify(referenceValue) {
-  if (!isLive()) {
-    return { provider: 'vepay_simulator', reference: referenceValue, status: 'completed' };
-  }
+  if (!isLive()) throw notLiveError('La verificación de pagos en Venezuela');
   const res = await call('/verify', { reference: referenceValue });
   return { provider: 'vepay', reference: referenceValue, status: res.status || 'pending', raw: res };
 }

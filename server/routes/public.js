@@ -59,15 +59,24 @@ router.get('/health', (req, res) => {
   });
 });
 
+/**
+ * Una vía sólo se muestra si puede cobrar de verdad. La tarjeta necesita
+ * dLocal Go en vivo; el resto opera en vivo o por cobro manual con comprobante.
+ */
+function methodAvailable(m) {
+  if (m === 'card' || m === 'card_transparent') return dlocalgo.isLive();
+  return true;
+}
+
 router.get('/config', (req, res) => {
   const s = getSettings();
   res.json({
     app_name: config.appName,
     currency: config.defaultCurrency,
     methods: orders.METHODS.filter((m) => {
+      if (!methodAvailable(m)) return false;
       const sw = {
         card: 'pay_card',
-        card_transparent: 'pay_card',
         pse: 'pay_pse',
         breb: 'pay_breb',
         cash: 'pay_cash',
@@ -125,10 +134,36 @@ router.get('/config', (req, res) => {
       send: s.direction_send !== '0',
       receive: s.direction_receive !== '0',
     },
-    countries: COUNTRIES,
+    countries: COUNTRIES.map((c) => ({ ...c, pay: c.pay.filter(methodAvailable) })),
     catalog: { methods: catalog.METHODS, rails: catalog.RAILS },
     maintenance: s.maintenance_mode === '1',
-    demo_mode: config.demoFallback,
+    manual_payment: {
+      enabled: s.manual_review !== '0',
+      require_proof: true,
+      instructions: s.collect_instructions || '',
+      accounts: {
+        ve_pago_movil: {
+          holder: s.collect_ve_pago_movil_holder || s.ve_merchant_name || '',
+          id: s.collect_ve_pago_movil_id || s.ve_merchant_document || '',
+          phone: s.collect_ve_pago_movil_phone || s.ve_merchant_phone || '',
+          bank: s.collect_ve_pago_movil_bank || s.ve_merchant_bank || '',
+        },
+        ve_transfer: {
+          holder: s.collect_ve_transfer_holder || s.ve_merchant_name || '',
+          id: s.collect_ve_transfer_id || s.ve_merchant_document || '',
+          bank: s.collect_ve_transfer_bank || s.ve_merchant_bank || '',
+          account: s.collect_ve_transfer_account || s.ve_merchant_account || '',
+        },
+        international: {
+          holder: s.collect_intl_holder || '',
+          bank: s.collect_intl_bank || '',
+          account: s.collect_intl_account || '',
+          swift: s.collect_intl_swift || '',
+          zelle: s.collect_intl_zelle || '',
+        },
+        cash_note: s.collect_cash_note || '',
+      },
+    },
   });
 });
 
@@ -168,7 +203,17 @@ router.post('/orders', createLimiter, async (req, res, next) => {
 router.get('/orders/:publicId', (req, res) => {
   const order = orders.getOrder(req.params.publicId);
   if (!order) return res.status(404).json({ error: 'Orden no encontrada.' });
-  res.json({ order: sanitize(order) });
+  const proofs = orders.listProofs(order.id).map((p) => ({
+    id: p.id,
+    status: p.status,
+    reference: p.reference,
+    note: p.note,
+    created_at: p.created_at,
+    reviewed_at: p.reviewed_at,
+    review_note: p.review_note,
+    original_name: p.original_name,
+  }));
+  res.json({ order: { ...sanitize(order), proofs } });
 });
 
 router.get('/orders/:publicId/status', (req, res) => {
@@ -219,47 +264,37 @@ router.post('/orders/:publicId/confirm', createLimiter, async (req, res, next) =
 });
 
 /**
- * Aprobación / rechazo en modo demostración. Solo funciona con órdenes cuyo
- * proveedor es un simulador; nunca sobre una orden real de dLocal Go.
+ * Subida del comprobante de pago para las vías manuales. Se envía el archivo
+ * en el cuerpo (image/* o application/pdf) y los datos por query string.
  */
-function demoGuard(req, res, next) {
-  const order = orders.getOrder(req.params.publicId);
-  if (!order) return res.status(404).json({ error: 'Orden no encontrada.' });
-  const simulators = ['demo', 'pse_simulator', 'breb_simulator', 'vepay_simulator'];
-  if (!simulators.includes(order.provider)) {
-    return res.status(403).json({ error: 'Esta orden no está en modo demostración.' });
+router.post(
+  '/orders/:publicId/proof',
+  createLimiter,
+  express.raw({ type: ['image/*', 'application/pdf'], limit: '8mb' }),
+  (req, res, next) => {
+    try {
+      const result = orders.attachProof(req.params.publicId, {
+        buffer: req.body,
+        mime: req.headers['content-type'],
+        originalName: req.query.name,
+        reference: req.query.reference,
+        note: req.query.note,
+        ip: req.ip,
+      });
+      res.status(201).json({
+        proof: {
+          id: result.proof.id,
+          status: result.proof.status,
+          reference: result.proof.reference,
+          created_at: result.proof.created_at,
+        },
+        order: sanitize(result.order),
+      });
+    } catch (err) {
+      next(err);
+    }
   }
-  if (!['pending', 'processing'].includes(order.status)) {
-    return res.status(409).json({ error: `La orden ya está ${order.status}.` });
-  }
-  req.order = order;
-  next();
-}
-
-router.post('/orders/:publicId/demo-approve', createLimiter, demoGuard, async (req, res, next) => {
-  try {
-    const updated = await orders.settlePayment(req.order.public_id, {
-      status: 'APPROVED',
-      providerRef: `DEMO-${req.order.public_id}`,
-      source: 'demo',
-    });
-    res.json({ order: sanitize(updated) });
-  } catch (err) {
-    next(err);
-  }
-});
-
-router.post('/orders/:publicId/demo-decline', createLimiter, demoGuard, async (req, res, next) => {
-  try {
-    const updated = await orders.settlePayment(req.order.public_id, {
-      status: 'REJECTED',
-      source: 'demo',
-    });
-    res.json({ order: sanitize(updated) });
-  } catch (err) {
-    next(err);
-  }
-});
+);
 
 /** Valida una cédula venezolana sin crear orden (feedback en el formulario). */
 router.post('/validate-document', createLimiter, (req, res) => {
@@ -270,8 +305,10 @@ router.post('/validate-document', createLimiter, (req, res) => {
 function sanitize(order) {
   if (!order) return order;
   const safe = { ...order };
-  delete safe.checkout_token;
+  // `checkout_token` sí se envía al navegador: es lo que permite renderizar el
+  // formulario transparente de tarjeta (SmartFields) en la página de pago.
   if (safe.breb_key) safe.breb_key = `${String(safe.breb_key).slice(0, 3)}***${String(safe.breb_key).slice(-2)}`;
+  if (safe.beneficiary_doc) safe.beneficiary_doc = undefined;
   return safe;
 }
 

@@ -34,7 +34,6 @@ BACKUP_KEEP=20
 KEEPALIVE_MINUTES=10
 
 # ---------- Modo de operación ----------
-DEMO_FALLBACK=true
 
 # ---------- dLocal Go (tarjetas) ----------
 DLOCALGO_API_URL=https://api.dlocalgo.com

@@ -256,7 +256,6 @@ const RAILS = [
  */
 const METHODS = {
   card: { name: 'Tarjeta', sub: 'Visa / Mastercard · 3D Secure', ico: 'card', currency: null, rail: 'bank', payer: null },
-  card_transparent: { name: 'Tarjeta transparente', sub: 'Checkout en la página', ico: 'spark', currency: null, rail: 'bank', payer: null },
   cash: { name: 'Efectivo', sub: 'Cupón de pago', ico: 'cash', currency: null, rail: 'cash_pickup', payer: null },
 
   pse: { name: 'PSE', sub: 'Débito bancario Colombia', ico: 'bank', currency: 'COP', rail: 'breb', payer: 'CO' },
@@ -319,7 +318,7 @@ function payMethods(countryCode) {
   const c = country(countryCode);
   if (!c) return ['card'];
   // Tarjeta internacional está disponible desde cualquier país.
-  return Array.from(new Set([...c.pay, 'card', 'card_transparent']));
+  return Array.from(new Set([...c.pay, 'card']));
 }
 
 /** Vías de entrega válidas en `countryCode`. */

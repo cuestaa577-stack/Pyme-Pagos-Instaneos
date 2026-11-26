@@ -38,6 +38,28 @@ async function req(path, { method = 'GET', body, headers = {} } = {}) {
   return { status: res.status, data, headers: res.headers };
 }
 
+
+async function uploadProof(publicId, { reference = 'REF-1', note = 'Prueba' } = {}) {
+  // PNG 1x1 transparente, suficiente para validar el flujo de comprobantes.
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64'
+  );
+  const qs = new URLSearchParams({ name: 'comprobante.png', reference, note });
+  const res = await fetch(`${BASE}/api/orders/${publicId}/proof?${qs}`, {
+    method: 'POST',
+    headers: { 'content-type': 'image/png' },
+    body: png,
+  });
+  let data = null;
+  try {
+    data = await res.json();
+  } catch {
+    data = null;
+  }
+  return { status: res.status, data };
+}
+
 function section(title) {
   console.log(`\n\x1b[1m${title}\x1b[0m`);
 }
@@ -62,8 +84,8 @@ async function main() {
   ok('destino en VES', q1.data?.destination_currency === 'VES');
   ok('monto destino > 0', q1.data?.destination_amount_cents > 0);
 
-  section('3. Orden internacional con tarjeta (modo demo)');
-  const order1 = await req('/api/orders', {
+  section('3. Tarjeta sin credenciales: no se simula, se deriva a cobro manual');
+  const cardAttempt = await req('/api/orders', {
     method: 'POST',
     body: {
       fullName: 'María Alejandra Pérez',
@@ -85,14 +107,41 @@ async function main() {
       description: 'Remesa familiar',
     },
   });
-  ok('orden creada 201', order1.status === 201, JSON.stringify(order1.data));
+  ok('tarjeta sin pasarela se rechaza 400', cardAttempt.status === 400, JSON.stringify(cardAttempt.data));
+  ok(
+    'mensaje claro de tarjeta',
+    /tarjeta/i.test(String(cardAttempt.data?.error || '')),
+    cardAttempt.data?.error
+  );
+
+  // Un método local sin adaptador propio se cobra por transferencia real.
+  const order1 = await req('/api/orders', {
+    method: 'POST',
+    body: {
+      fullName: 'María Alejandra Pérez',
+      email: 'maria@example.com',
+      phone: '+584141234567',
+      document: 'V-12345678',
+      beneficiaryName: 'Luis Gómez',
+      beneficiaryDocument: 'V-23456789',
+      rail: 'pago_movil_ve',
+      keyType: 'phone',
+      brebKey: '04141234567',
+      bankCode: '0134',
+      bankName: 'Banesco',
+      amountCents: 10000,
+      currency: 'CLP',
+      payerCountry: 'CL',
+      country: 'VE',
+      method: 'cl_transfer',
+      description: 'Remesa familiar',
+    },
+  });
+  ok('orden CL creada 201', order1.status === 201, JSON.stringify(order1.data));
   const pid1 = order1.data?.order?.public_id;
   ok('tiene public_id', Boolean(pid1));
-  ok('checkout demo', String(order1.data?.order?.checkout_url || '').startsWith('/pay/'), order1.data?.order?.checkout_url);
-
-  const approve1 = await req(`/api/orders/${pid1}/demo-approve`, { method: 'POST' });
-  ok('aprobación demo 200', approve1.status === 200, JSON.stringify(approve1.data));
-  ok('orden completada', approve1.data?.order?.status === 'completed', approve1.data?.order?.status);
+  ok('checkout /pay/manual', String(order1.data?.order?.checkout_url || '').startsWith('/pay/manual/'), order1.data?.order?.checkout_url);
+  ok('proveedor manual (sin demo)', order1.data?.order?.provider === 'manual', order1.data?.order?.provider);
 
   section('4. Pago desde Venezuela (VES, Pago Móvil)');
   const q2 = await req('/api/quote', {
@@ -126,12 +175,15 @@ async function main() {
   });
   ok('orden VE creada 201', order2.status === 201, JSON.stringify(order2.data));
   const pid2 = order2.data?.order?.public_id;
-  ok('checkout /pay/ve', String(order2.data?.order?.checkout_url || '').startsWith('/pay/ve/'), order2.data?.order?.checkout_url);
-  ok('proveedor vepay_simulator', order2.data?.order?.provider === 'vepay_simulator', order2.data?.order?.provider);
+  ok('checkout /pay/manual', String(order2.data?.order?.checkout_url || '').startsWith('/pay/manual/'), order2.data?.order?.checkout_url);
+  ok('proveedor manual', order2.data?.order?.provider === 'manual', order2.data?.order?.provider);
 
-  const approve2 = await req(`/api/orders/${pid2}/demo-approve`, { method: 'POST' });
-  ok('aprobación VE 200', approve2.status === 200, JSON.stringify(approve2.data));
-  ok('orden VE completada', approve2.data?.order?.status === 'completed', approve2.data?.order?.status);
+  const proof2 = await uploadProof(pid2, { reference: '0045123' });
+  ok('comprobante subido 201', proof2.status === 201, JSON.stringify(proof2.data));
+  ok('comprobante pendiente', proof2.data?.proof?.status === 'pending', proof2.data?.proof?.status);
+
+  const early2 = await req(`/api/orders/${pid2}/approve`, { method: 'POST' });
+  ok('no existe auto-aprobación pública', early2.status === 404, String(early2.status));
 
   section('5. Administración');
   const login = await req('/api/admin/login', {
@@ -146,6 +198,16 @@ async function main() {
   ok('csrf presente', Boolean(csrf));
 
   const auth = { cookie, 'x-csrf-token': csrf };
+
+  const review = await req(`/api/admin/orders/${pid2}/review`, {
+    method: 'POST',
+    headers: auth,
+    body: { action: 'approve', note: 'Comprobante verificado' },
+  });
+  ok('aprobación manual 200', review.status === 200, JSON.stringify(review.data));
+  ok('orden VE aprobada', review.data?.order?.status === 'approved', review.data?.order?.status);
+  ok('entrega al beneficiario pendiente', review.data?.order?.payout_status === 'pending', review.data?.order?.payout_status);
+
   const stats = await req('/api/admin/stats', { headers: auth });
   ok('stats 200', stats.status === 200, JSON.stringify(stats.data));
   ok('stats incluye VES', Boolean(stats.data?.balances?.VES));
@@ -190,7 +252,12 @@ async function main() {
     },
   });
   const pid3 = order3.data?.order?.public_id;
-  const approve3 = await req(`/api/orders/${pid3}/demo-approve`, { method: 'POST' });
+  await uploadProof(pid3, { reference: 'RETIRO-1' });
+  const approve3 = await req(`/api/admin/orders/${pid3}/review`, {
+    method: 'POST',
+    headers: auth,
+    body: { action: 'approve', note: 'Cobro para retiro' },
+  });
   ok('orden VE para retiro aprobada', approve3.data?.order?.status === 'approved', approve3.data?.order?.status);
 
   const wd = await req('/api/admin/withdrawals', {
@@ -208,7 +275,14 @@ async function main() {
     },
   });
   ok('retiro VES 201', wd.status === 201, JSON.stringify(wd.data));
-  ok('retiro completado', wd.data?.withdrawal?.status === 'completed', wd.data?.withdrawal?.status);
+  ok('retiro pendiente (sin riel en vivo)', wd.data?.withdrawal?.status === 'pending', wd.data?.withdrawal?.status);
+  const wdId = wd.data?.withdrawal?.public_id;
+  const wdPaid = await req(`/api/admin/withdrawals/${wdId}/paid`, {
+    method: 'POST',
+    headers: auth,
+    body: { reference: 'TRF-0001' },
+  });
+  ok('retiro marcado como pagado', wdPaid.data?.withdrawal?.status === 'completed', JSON.stringify(wdPaid.data));
 
   await req('/api/admin/settings', {
     method: 'PUT',

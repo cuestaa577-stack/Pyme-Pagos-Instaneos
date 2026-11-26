@@ -29,12 +29,24 @@ const cedula = require('../lib/cedula');
 function mode() {
   if (config.breb.mode === 'simulator') return 'simulator';
   if (config.breb.mode === 'live') return 'live';
-  return config.breb.apiUrl && config.breb.apiKey ? 'live' : 'simulator';
+  return config.breb.apiUrl && config.breb.apiKey ? 'live' : 'manual';
 }
 
 function isLive() {
   return mode() === 'live';
 }
+
+/**
+ * Error de vía no habilitada. No existe ningún modo simulado: si el riel no
+ * tiene credenciales reales, la orden se deriva al cobro manual con comprobante.
+ */
+function notLiveError(label) {
+  const err = new Error(`${label} no está habilitado con credenciales reales.`);
+  err.notLive = true;
+  err.rail = label;
+  return err;
+}
+
 
 const KEY_TYPES = {
   cedula: 'Cédula',
@@ -94,23 +106,7 @@ async function sendTransfer({
   const key = validateKey(keyType, keyValue);
   if (!key.valid) throw new Error(key.error);
 
-  if (!isLive()) {
-    const suffix = crypto.randomBytes(4).toString('hex').toUpperCase();
-    return {
-      provider: 'breb_simulator',
-      providerRef: `BREB-SIM-${suffix}`,
-      status: 'completed',
-      trackingCode: `BREB-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${suffix}`,
-      instant: true,
-      raw: {
-        simulated: true,
-        amount: toMajor(amountCents, currency),
-        currency,
-        key_type: key.type,
-        key_value: key.normalized,
-      },
-    };
-  }
+  if (!isLive()) throw notLiveError('BRE-B');
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), config.breb.timeoutMs);

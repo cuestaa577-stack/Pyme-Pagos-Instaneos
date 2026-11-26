@@ -50,16 +50,14 @@ p { margin: 0; line-height: 1.6; }
 .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 72px; }
 .logo { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 1.15rem; }
 .logo-mark {
-  width: 38px; height: 38px; border-radius: 12px;
-  background: linear-gradient(180deg,
-    var(--ve-yellow) 0 33.33%,
-    var(--ve-blue) 33.33% 66.66%,
-    var(--ve-red) 66.66% 100%);
-  display: grid; place-items: center; font-size: 1.02rem; color: #fff; font-weight: 900;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
-  box-shadow: 0 10px 26px rgba(255, 206, 0, 0.22), inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+  width: 38px; height: 38px; border-radius: 12px; overflow: hidden; flex: 0 0 auto;
+  display: grid; place-items: center;
+  background: #038796;
+  box-shadow: 0 10px 26px rgba(3, 135, 150, 0.32), inset 0 0 0 1px rgba(255, 255, 255, 0.16);
 }
-.nav-links { display: flex; gap: 26px; align-items: center; }
+.logo-mark img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.nav-links { display: flex; gap: 18px; align-items: center; }
+.nav-links a, .nav-links .btn, .nav-login { white-space: nowrap; }
 .nav-links a { color: var(--muted); font-size: 0.93rem; font-weight: 500; }
 .nav-links a:hover { color: var(--text); }
 .nav-login {
@@ -698,12 +696,11 @@ svg.i { display: inline-block; vertical-align: -0.18em; flex: 0 0 auto; }
 }
 .login-brand { display: flex; align-items: center; gap: 13px; }
 .login-brand .logo {
-  width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center;
-  font-size: 1.3rem; font-weight: 900; color: #fff;
-  background: linear-gradient(180deg, var(--ve-yellow) 0 33.33%, var(--ve-blue) 33.33% 66.66%, var(--ve-red) 66.66% 100%);
-  box-shadow: 0 12px 30px rgba(255, 206, 0, 0.24), inset 0 0 0 1px rgba(255, 255, 255, 0.18);
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  width: 48px; height: 48px; border-radius: 14px; overflow: hidden; display: grid; place-items: center;
+  background: #038796;
+  box-shadow: 0 12px 30px rgba(3, 135, 150, 0.3), inset 0 0 0 1px rgba(255, 255, 255, 0.18);
 }
+.login-brand .logo img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .login-brand-name { font-weight: 800; font-size: 1.05rem; letter-spacing: -0.01em; }
 .login-brand-sub { font-size: 0.74rem; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; }
 .login-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
@@ -729,9 +726,14 @@ svg.i { display: inline-block; vertical-align: -0.18em; flex: 0 0 auto; }
   .footer-inner { grid-template-columns: 1fr 1fr; }
   .contact-card { grid-template-columns: 1fr; gap: 24px; }
 }
-@media (max-width: 860px) {
+@media (max-width: 1180px) {
+  .nav-links { gap: 12px; }
+  .nav-links a { font-size: 0.86rem; }
+}
+@media (max-width: 1060px) {
   .nav-links { display: none; }
   .nav-burger { display: inline-flex; }
+  .nav-mobile-actions { display: flex; }
   .topbar-right { display: none; }
 }
 @media (max-width: 720px) {
@@ -782,7 +784,7 @@ svg.i { display: inline-block; vertical-align: -0.18em; flex: 0 0 auto; }
   display: flex; flex-direction: column; gap: 10px;
 }
 .phone-brand { display: flex; align-items: center; gap: 8px; font-size: 0.78rem; font-weight: 800; }
-.phone-brand .logo-mark { width: 22px; height: 22px; border-radius: 7px; font-size: 0.62rem; }
+.phone-brand .logo-mark { width: 22px; height: 22px; border-radius: 7px; }
 .phone-amount { font-size: 1.35rem; font-weight: 800; margin-top: 10px; color: #fff; }
 .phone-sub { font-size: 0.66rem; color: var(--muted); }
 .phone-rows { display: grid; gap: 6px; margin-top: 8px; }
@@ -866,3 +868,62 @@ svg.i { display: inline-block; vertical-align: -0.18em; flex: 0 0 auto; }
 .fatal h2 { margin: 0 0 10px; font-size: 1.25rem; color: #fff; }
 .fatal p { color: #9aa7bd; font-size: 0.92rem; line-height: 1.55; }
 .fatal .btn { margin: 8px 4px 0; }
+
+/* ---------------- avisos (revisión manual, errores) ---------------- */
+.notice {
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(16, 26, 43, 0.75);
+  padding: 14px 16px;
+  font-size: 0.88rem;
+}
+.notice strong { display: block; font-weight: 700; }
+.notice-info { border-color: rgba(90, 160, 255, 0.35); background: rgba(90, 160, 255, 0.08); }
+.notice-warn { border-color: rgba(255, 207, 77, 0.35); background: rgba(255, 207, 77, 0.07); }
+.notice-error { border-color: rgba(255, 96, 96, 0.38); background: rgba(255, 96, 96, 0.08); }
+.notice-ok { border-color: rgba(46, 204, 113, 0.35); background: rgba(46, 204, 113, 0.08); }
+
+/* input de archivo legible en tema oscuro */
+input[type='file'].input {
+  padding: 10px 12px;
+  font-size: 0.82rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+input[type='file'].input::file-selector-button {
+  margin-right: 12px;
+  padding: 8px 14px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: rgba(255, 206, 0, 0.12);
+  color: var(--text);
+  font-weight: 600;
+  cursor: pointer;
+}
+input[type='file'].input::file-selector-button:hover { background: rgba(255, 206, 0, 0.2); }
+
+/* ---------------- modal de revisión (admin) ---------------- */
+.modal-back {
+  position: fixed;
+  inset: 0;
+  background: rgba(3, 7, 16, 0.72);
+  backdrop-filter: blur(3px);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  z-index: 90;
+}
+.modal {
+  width: min(760px, 100%);
+  max-height: 88vh;
+  overflow-y: auto;
+  background: var(--card, #0d1728);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 22px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+}
+.modal-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 16px; }
+.modal-head h3 { font-size: 1.02rem; font-weight: 700; }
+.modal-body h4 { font-size: 0.9rem; font-weight: 700; }
+.nowrap { white-space: nowrap; }

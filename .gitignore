@@ -21,3 +21,6 @@ data/guardian.log*
 Thumbs.db
 coverage/
 dist/
+
+# Comprobantes subidos por clientes (datos personales)
+data/proofs/

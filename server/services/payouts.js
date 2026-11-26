@@ -73,12 +73,14 @@ async function createInstantPayout({
 
   const pid = publicId();
   const isVeRail = ['pago_movil_ve', 'transfer_ve', 'cash_ve', 'pago_movil'].includes(b.rail);
-  const isDemo = isVeRail ? !vepay.isLive() : !breb.isLive();
+  // Sin credenciales reales del riel no se simula nada: la entrega queda
+  // PENDIENTE para que el dueño la pague y la marque como pagada.
+  const railLive = isVeRail ? vepay.isLive() : breb.isLive();
   const info = db
     .prepare(
       `INSERT INTO payouts (public_id, beneficiary_id, amount_cents, currency, country, flow_type, purpose,
         status, provider, idempotency_key, description, metadata)
-       VALUES (?, ?, ?, ?, ?, 'B2C', ?, 'processing', ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, 'B2C', ?, ?, ?, ?, ?, ?)`
     )
     .run(
       pid,
@@ -87,7 +89,8 @@ async function createInstantPayout({
       destCurrency,
       b.country,
       purpose,
-      isVeRail ? (vepay.isLive() ? 'vepay' : 'vepay_simulator') : breb.isLive() ? 'breb' : 'breb_simulator',
+      railLive ? 'processing' : 'pending',
+      railLive ? (isVeRail ? 'vepay' : 'breb') : 'manual',
       idempotencyKey || null,
       description || `Pago a ${b.full_name}`,
       JSON.stringify({
@@ -99,6 +102,18 @@ async function createInstantPayout({
       })
     );
   const payoutId = Number(info.lastInsertRowid);
+
+  if (!railLive) {
+    audit({
+      actor,
+      action: 'payout.manual_pending',
+      entity: 'payout',
+      entityId: pid,
+      ip,
+      metadata: { beneficiary: b.full_name, amount: amountCents, currency: destCurrency, rail: b.rail },
+    });
+    return getPayout(payoutId);
+  }
 
   try {
     let result;
@@ -260,18 +275,6 @@ async function createDlocalPayout({
     audit({ actor, action: 'payout.dlocal', entity: 'payout', entityId: pid, ip, metadata: { amount: amountCents, currency } });
     return getPayout(payoutId);
   } catch (err) {
-    if (err.auth && config.demoFallback) {
-      const suffix = crypto.randomBytes(4).toString('hex').toUpperCase();
-      db.prepare(
-        `UPDATE payouts SET status = 'completed', provider = 'demo', provider_ref = ?, metadata = ?, updated_at = datetime('now') WHERE id = ?`
-      ).run(
-        `DLOCAL-SIM-${suffix}`,
-        JSON.stringify({ fee_cents: feeCents, simulated: true, provider_error: err.message }),
-        payoutId
-      );
-      ledger.debitPayout({ payoutId, amountCents, feeCents, currency, description: `Payout demo ${pid}` });
-      return getPayout(payoutId);
-    }
     db.prepare(
       `UPDATE payouts SET status = 'failed', metadata = ?, updated_at = datetime('now') WHERE id = ?`
     ).run(JSON.stringify({ fee_cents: feeCents, error: err.message }), payoutId);
@@ -305,7 +308,60 @@ async function createDlocalBeneficiary({ beneficiaryId, flowType = 'B2C', email 
   return result;
 }
 
+
+/**
+ * Marca una entrega como pagada cuando el dueño la ejecuta por fuera (banco,
+ * Pago Móvil, efectivo). Es dinero real: asienta el débito en el ledger y
+ * cierra la orden asociada.
+ */
+function markPaid(publicIdValue, { reference, actor = 'admin', ip } = {}) {
+  const row = db.prepare('SELECT * FROM payouts WHERE public_id = ?').get(publicIdValue);
+  if (!row) throw new Error('Entrega no encontrada.');
+  if (row.status === 'completed') return serialize(row);
+  if (!['pending', 'processing', 'failed'].includes(row.status)) {
+    throw new Error(`No se puede marcar como pagada una entrega en estado ${row.status}.`);
+  }
+  const meta = row.metadata ? JSON.parse(row.metadata) : {};
+  const sourceCurrency = meta.source_currency || row.currency;
+  const sourceAmount = Number(meta.source_amount_cents || row.amount_cents);
+  const feeCents = Number(meta.fee_cents || 0);
+
+  db.prepare(
+    `UPDATE payouts SET status = 'completed', provider = 'manual', provider_ref = ?, metadata = ?,
+     updated_at = datetime('now') WHERE id = ?`
+  ).run(
+    reference || `MANUAL-${row.public_id}`,
+    JSON.stringify({ ...meta, marked_paid_by: actor, marked_paid_at: new Date().toISOString(), manual_reference: reference || null }),
+    row.id
+  );
+
+  ledger.debitPayout({
+    payoutId: row.id,
+    amountCents: sourceAmount,
+    feeCents,
+    currency: sourceCurrency,
+    description: `Entrega manual ${row.public_id}`,
+  });
+
+  if (row.transaction_id) {
+    db.prepare(`UPDATE transactions SET status = 'completed', updated_at = datetime('now') WHERE id = ?`).run(
+      row.transaction_id
+    );
+  }
+
+  audit({
+    actor,
+    action: 'payout.mark_paid',
+    entity: 'payout',
+    entityId: row.public_id,
+    ip,
+    metadata: { reference: reference || null, amount: sourceAmount, currency: sourceCurrency },
+  });
+  return getPayout(row.id);
+}
+
 module.exports = {
+  markPaid,
   createInstantPayout,
   createDlocalPayout,
   createDlocalBeneficiary,

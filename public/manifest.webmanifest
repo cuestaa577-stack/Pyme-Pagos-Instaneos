@@ -8,11 +8,19 @@
   "start_url": "/?source=pwa",
   "scope": "/",
   "display": "standalone",
-  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "display_override": [
+    "window-controls-overlay",
+    "standalone",
+    "minimal-ui"
+  ],
   "orientation": "portrait-primary",
   "background_color": "#040814",
-  "theme_color": "#040814",
-  "categories": ["finance", "business", "productivity"],
+  "theme_color": "#038796",
+  "categories": [
+    "finance",
+    "business",
+    "productivity"
+  ],
   "prefer_related_applications": false,
   "icons": [
     {
@@ -45,19 +53,34 @@
       "name": "Enviar dinero",
       "short_name": "Enviar",
       "url": "/enviar",
-      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
     },
     {
       "name": "Recibir dinero",
       "short_name": "Recibir",
       "url": "/recibir",
-      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
     },
     {
       "name": "Panel de administración",
       "short_name": "Panel",
       "url": "/admin.html",
-      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
     }
   ]
 }

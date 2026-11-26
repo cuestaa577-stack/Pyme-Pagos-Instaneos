@@ -54,7 +54,6 @@ const FLAGS = {
 
 const METHOD_FALLBACK = {
   card: { name: 'Tarjeta', sub: 'Visa / Mastercard', ico: 'card' },
-  card_transparent: { name: 'Tarjeta transparente', sub: 'Checkout en la página', ico: 'spark' },
   cash: { name: 'Efectivo', sub: 'Cupón de pago', ico: 'cash' },
   pse: { name: 'PSE', sub: 'Débito bancario Colombia', ico: 'bank' },
   breb: { name: 'BRE-B', sub: 'Transferencia instantánea', ico: 'key' },
@@ -82,7 +81,7 @@ function currencyOf(code) {
 
 function methodsFor(code) {
   const c = countryByCode(code);
-  const list = c?.pay || ['card', 'card_transparent'];
+  const list = c?.pay || ['card'];
   return Array.from(new Set(list));
 }
 
@@ -97,6 +96,52 @@ function railsFor(code) {
 
 function banksFor(code) {
   return countryByCode(code)?.banks || [];
+}
+
+/** Texto de ayuda del documento según el país al que pertenece. */
+function docHintFor(code) {
+  if (String(code).toUpperCase() === 'VE') {
+    return 'Formatos válidos: V-12345678, E-12345678, J-123456789, P-1234567. También aceptamos 12345678.';
+  }
+  const c = countryByCode(code);
+  return `Documento de identidad de ${c.name} (${c.doc || 'documento local'}). Sin puntos ni símbolos raros.`;
+}
+
+/** true si el documento de ese país se valida como cédula venezolana. */
+function isVeDoc(code) {
+  return String(code).toUpperCase() === 'VE';
+}
+
+/**
+ * Comprueba el documento localmente (sin red) y devuelve un mensaje de error
+ * en español, o null si está bien. Evita el toast genérico al final del paso.
+ */
+function checkDocument(value, code, isBeneficiary = false) {
+  const raw = String(value || '').trim();
+  const who = isBeneficiary ? 'del beneficiario' : 'de identidad';
+  if (!raw) return `Escribe el documento ${who}.`;
+  if (isVeDoc(code)) {
+    const clean = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!clean) return 'Escribe tu cédula. Ejemplo: V-12345678.';
+    const m = clean.match(/^([VEJGP])([0-9A-Z]+)$/);
+    const type = m ? m[1] : /^\d+$/.test(clean) ? 'V' : '';
+    const num = m ? m[2] : clean;
+    if (!type) return 'Formato inválido. Usa por ejemplo V-12345678.';
+    if (['V', 'E', 'J', 'G'].includes(type)) {
+      if (!/^\d+$/.test(num)) return `La cédula ${type} debe tener solo números.`;
+      if (type === 'J' || type === 'G') {
+        if (num.length < 8 || num.length > 10) return `El RIF ${type} debe tener entre 8 y 10 dígitos.`;
+      } else if (num.length < 6 || num.length > 9) {
+        return `La cédula ${type} debe tener entre 6 y 9 dígitos.`;
+      }
+    } else if (num.length < 6 || num.length > 12) {
+      return 'El pasaporte debe tener entre 6 y 12 caracteres.';
+    }
+    return null;
+  }
+  if (raw.length < 5) return `El documento ${who} debe tener al menos 5 caracteres.`;
+  if (!/^[A-Za-z0-9][A-Za-z0-9 .-]*$/.test(raw)) return 'El documento tiene símbolos no válidos.';
+  return null;
 }
 
 function railLabel(rail) {
@@ -194,6 +239,12 @@ const app = () => $('#app');
 
 function esc(v) {
   return String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function fmtRate(rate) {
+  const n = Number(rate);
+  if (!Number.isFinite(n)) return '—';
+  return n >= 100 ? n.toFixed(0) : n >= 10 ? n.toFixed(2) : n.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
 }
 
 function money(cents, currency) {
@@ -296,9 +347,9 @@ async function api(path, options = {}) {
     let res;
     try {
       res = await fetch(`/api${path}`, {
-        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
         cache: 'no-store',
         ...options,
+        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
       });
     } catch (netErr) {
       lastErr = new Error('Sin conexión con el servidor.');
@@ -386,7 +437,7 @@ function nav() {
   <div class="nav" id="site-nav">
     <div class="wrap nav-inner">
       <a class="logo" href="/" data-link>
-        <span class="logo-mark">R</span>
+        <span class="logo-mark"><img src="/icons/logo-mark.png" alt="RemesaYa" width="38" height="38" /></span>
         <span>RemesaYa</span>
       </a>
       <div class="nav-links">
@@ -425,7 +476,7 @@ function footer() {
   <div class="footer" id="contacto">
     <div class="wrap footer-inner">
       <div class="footer-brand">
-        <div class="logo" style="margin-bottom:12px"><span class="logo-mark">R</span><span>RemesaYa</span></div>
+        <div class="logo" style="margin-bottom:12px"><span class="logo-mark"><img src="/icons/logo-mark.png" alt="RemesaYa" width="38" height="38" /></span><span>RemesaYa</span></div>
         <div class="small muted">Remesas y pagos instantáneos entre Venezuela, Chile, Colombia, Perú, Argentina, México, Ecuador, Panamá, República Dominicana, España y Estados Unidos.</div>
         <div class="footer-social mt16">
           <a class="social" href="${whatsappLink()}" target="_blank" rel="noopener">${icon('phone', 16)} WhatsApp</a>
@@ -666,7 +717,7 @@ function landingView() {
           <div class="phone">
             <div class="phone-notch"></div>
             <div class="phone-screen">
-              <div class="phone-brand"><span class="logo-mark">R</span> RemesaYa</div>
+              <div class="phone-brand"><span class="logo-mark"><img src="/icons/logo-mark.png" alt="" width="22" height="22" /></span> RemesaYa</div>
               <div class="phone-amount">Bs 12.000,00</div>
               <div class="phone-sub">Enviaste USD 100,00 · entrega inmediata</div>
               <div class="phone-rows">
@@ -759,7 +810,7 @@ function wizardView() {
       <label class="field">
         <span>Documento de identidad (${esc(c.doc || 'Documento')})</span>
         <input class="input" id="w-doc" placeholder="${esc(c.doc || 'Documento')}" value="${esc(d.document)}" autocomplete="off" />
-        <div class="hint" id="w-doc-hint">${d.payerCountry === 'VE' || d.country === 'VE' ? 'Formatos válidos: V-12345678, E-12345678, J-123456789, P-1234567' : `Documento local de ${esc(c.name)}`}</div>
+        <div class="hint" id="w-doc-hint">${docHintFor(d.direction === 'receive' ? d.country : d.payerCountry)}</div>
       </label>
       <div class="row2">
         <label class="field">
@@ -789,7 +840,7 @@ function wizardView() {
       <label class="field">
         <span>Documento del beneficiario (${esc(c.doc || 'Documento')})</span>
         <input class="input" id="w-bdoc" placeholder="${esc(c.doc || 'Documento')}" value="${esc(d.beneficiaryDocument)}" />
-        <div class="hint" id="w-bdoc-hint">Identificación obligatoria para entregar el dinero.</div>
+        <div class="hint" id="w-bdoc-hint">${docHintFor(d.country)}</div>
       </label>
       <label class="field">
         <span>Vía de entrega en ${esc(c.name)}</span>
@@ -840,7 +891,9 @@ function wizardView() {
   }
 
   if (state.step === 4) {
-    const methods = methodsFor(d.payerCountry).map((id) => ({ id, ...methodInfo(id) }));
+    const allowedMethods = methodsFor(d.payerCountry);
+    if (!allowedMethods.includes(d.method)) d.method = allowedMethods[0];
+    const methods = allowedMethods.map((id) => ({ id, ...methodInfo(id) }));
     body = `
       <label class="field">
         <span>¿Cómo deseas pagar?</span>
@@ -950,15 +1003,25 @@ function bindWizard() {
       clearTimeout(t);
       t = setTimeout(async () => {
         const hint = $('#w-doc-hint');
-        if (!docEl.value.trim() || !hint) return;
-        if (d.payerCountry !== 'VE' && d.country !== 'VE') {
+        if (!hint) return;
+        // El documento del pagador pertenece a SU país, no al destino.
+        const owner = d.direction === 'receive' ? d.country : d.payerCountry;
+        const value = docEl.value.trim();
+        if (!value) {
           docEl.classList.remove('err');
           hint.className = 'hint';
-          hint.textContent = 'Documento local válido.';
+          hint.textContent = docHintFor(owner);
+          return;
+        }
+        if (!isVeDoc(owner)) {
+          const okDoc = value.length >= 5 && /^[A-Za-z0-9][A-Za-z0-9 .-]*$/.test(value);
+          docEl.classList.toggle('err', !okDoc);
+          hint.className = `hint ${okDoc ? 'ok' : 'error'}`;
+          hint.textContent = okDoc ? 'Documento con formato válido.' : 'Escribe un documento válido (mínimo 5 caracteres, sin símbolos raros).';
           return;
         }
         try {
-          const r = await api('/validate-document', { method: 'POST', body: JSON.stringify({ document: docEl.value }) });
+          const r = await api('/validate-document', { method: 'POST', body: JSON.stringify({ document: value }) });
           docEl.classList.toggle('err', !r.valid);
           hint.className = `hint ${r.valid ? 'ok' : 'error'}`;
           hint.textContent = r.valid ? `Cédula válida (${r.type}) · ${r.masked}` : r.error;
@@ -971,17 +1034,36 @@ function bindWizard() {
 
   const bdocEl = $('#w-bdoc');
   if (bdocEl) {
+    let bt;
     bdocEl.addEventListener('input', () => {
       d.beneficiaryDocument = bdocEl.value;
-      const hint = $('#w-bdoc-hint');
-      if (!hint) return;
-      if (d.country === 'VE') {
-        hint.className = 'hint';
-        hint.textContent = 'La cédula venezolana del beneficiario es obligatoria.';
-      } else {
-        hint.className = 'hint';
-        hint.textContent = `Documento local de ${countryByCode(d.country).name}.`;
-      }
+      clearTimeout(bt);
+      bt = setTimeout(async () => {
+        const hint = $('#w-bdoc-hint');
+        if (!hint) return;
+        const value = bdocEl.value.trim();
+        if (!value) {
+          bdocEl.classList.remove('err');
+          hint.className = 'hint';
+          hint.textContent = docHintFor(d.country);
+          return;
+        }
+        if (!isVeDoc(d.country)) {
+          const okDoc = value.length >= 5 && /^[A-Za-z0-9][A-Za-z0-9 .-]*$/.test(value);
+          bdocEl.classList.toggle('err', !okDoc);
+          hint.className = `hint ${okDoc ? 'ok' : 'error'}`;
+          hint.textContent = okDoc ? 'Documento con formato válido.' : 'Escribe un documento válido (mínimo 5 caracteres).';
+          return;
+        }
+        try {
+          const r = await api('/validate-document', { method: 'POST', body: JSON.stringify({ document: value }) });
+          bdocEl.classList.toggle('err', !r.valid);
+          hint.className = `hint ${r.valid ? 'ok' : 'error'}`;
+          hint.textContent = r.valid ? `Cédula válida (${r.type}) · ${r.masked}` : `Documento del beneficiario: ${r.error}`;
+        } catch {
+          /* silencioso */
+        }
+      }, 380);
     });
   }
 
@@ -1032,10 +1114,14 @@ function collectStep() {
     d.phone = $('#w-phone')?.value.trim() || d.phone;
     if (d.fullName.length < 3) {
       toast('Escribe tu nombre completo.', 'err');
+      $('#w-name')?.focus();
       return false;
     }
-    if (!d.document || d.document.length < 5) {
-      toast('Ingresa tu documento de identidad.', 'err');
+    const owner = d.direction === 'receive' ? d.country : d.payerCountry;
+    const docProblem = checkDocument(d.document, owner);
+    if (docProblem) {
+      toast(docProblem, 'err');
+      $('#w-doc')?.focus();
       return false;
     }
     return true;
@@ -1058,19 +1144,25 @@ function collectStep() {
       toast('Escribe el nombre del beneficiario.', 'err');
       return false;
     }
-    if (!d.beneficiaryDocument || d.beneficiaryDocument.length < 5) {
-      toast('Ingresa el documento del beneficiario.', 'err');
+    const bProblem = checkDocument(d.beneficiaryDocument, d.country, true);
+    if (bProblem) {
+      toast(bProblem, 'err');
+      $('#w-bdoc')?.focus();
       return false;
     }
-    if (['bank', 'pago_movil', 'pago_movil_ve', 'transfer_ve', 'wallet'].includes(d.rail)) {
+    if (['bank', 'pago_movil', 'pago_movil_ve', 'transfer_ve'].includes(d.rail)) {
       if (!d.bankCode) {
-        toast(d.rail === 'wallet' ? 'Selecciona la billetera.' : 'Selecciona el banco.', 'err');
+        toast('Selecciona el banco.', 'err');
         return false;
       }
       if (!d.keyValue) {
-        toast('Ingresa el teléfono, cuenta o alias de entrega.', 'err');
+        toast('Ingresa el teléfono o número de cuenta de entrega.', 'err');
         return false;
       }
+    }
+    if (d.rail === 'wallet' && !d.keyValue) {
+      toast('Ingresa el teléfono o alias de la billetera.', 'err');
+      return false;
     }
     if (d.rail === 'breb' && !d.keyValue) {
       toast('Ingresa la llave BRE-B.', 'err');
@@ -1117,8 +1209,8 @@ function buildPayload() {
 
 async function refreshQuote() {
   const d = state.draft;
+  // La cotización se pide siempre; el recuadro es opcional (el paso 4 usa el resumen).
   const box = $('#w-quote') || $('#calc-quote');
-  if (!box) return null;
   const amountCents = amountCentsForQuote();
   if (!amountCents) return null;
   const method = methodInfo(d.method);
@@ -1129,14 +1221,14 @@ async function refreshQuote() {
       body: JSON.stringify({ amountCents, currency, country: d.country, method: d.method }),
     });
     state.quote = q;
-    box.innerHTML = `
+    if (box) box.innerHTML = `
       <div class="quote-row"><span>${d.direction === 'receive' ? 'Recibes' : 'Envías'}</span><strong>${q.destination_amount_formatted}</strong></div>
       <div class="quote-row"><span>Comisión (${q.fee_percent}%)</span><strong>${q.fee_formatted}</strong></div>
       <div class="quote-row total"><span>${d.direction === 'receive' ? 'Paga quien te envía' : 'Total a pagar'}</span><strong>${q.total_formatted}</strong></div>
-      <div class="quote-row"><span>Tasa</span><strong>1 ${q.currency} = ${q.fx_rate} ${q.destination_currency}</strong></div>`;
+      <div class="quote-row"><span>Tasa</span><strong>1 ${q.currency} = ${fmtRate(q.fx_rate)} ${q.destination_currency}</strong></div>`;
     return q;
   } catch (err) {
-    box.innerHTML = `<div class="quote-row"><span style="color:var(--danger)">${esc(err.message)}</span></div>`;
+    if (box) box.innerHTML = `<div class="quote-row"><span style="color:var(--danger)">${esc(err.message)}</span></div>`;
     return null;
   }
 }
@@ -1145,8 +1237,19 @@ async function renderSummary() {
   const el = $('#w-summary');
   if (!el) return;
   const d = state.draft;
-  const q = await refreshQuote();
-  if (!q) return;
+  el.innerHTML = '<div class="sr"><span>Calculando total…</span><strong>—</strong></div>';
+  let q = null;
+  try {
+    q = await refreshQuote();
+  } catch {
+    q = null;
+  }
+  // Si el contenedor desapareció (el usuario cambió de paso) no seguimos.
+  if (!document.body.contains(el)) return;
+  if (!q) {
+    el.innerHTML = '<div class="sr"><span>No pudimos calcular el total</span><strong>Revisa el monto</strong></div>';
+    return;
+  }
   el.innerHTML = `
     <div class="sr"><span>Dirección</span><strong>${d.direction === 'receive' ? 'Recibir' : 'Enviar'}</strong></div>
     <div class="sr"><span>Origen → destino</span><strong>${esc(countryByCode(d.payerCountry).name)} → ${esc(countryByCode(d.country).name)}</strong></div>
@@ -1157,6 +1260,145 @@ async function renderSummary() {
     <div class="sr"><span>Documento</span><strong>${esc(d.beneficiaryDocument)}</strong></div>
     <div class="sr"><span>Entrega</span><strong>${railLabel(d.rail)}</strong></div>
     <div class="sr"><span>Recibe</span><strong style="color:var(--brand)">${q.destination_amount_formatted}</strong></div>`;
+}
+
+
+/* ---------------- pago manual con comprobante ---------------- */
+
+/**
+ * Datos reales de recaudo configurados por el negocio. Si no hay ninguno,
+ * lo decimos con claridad en vez de inventar una cuenta.
+ */
+function manualAccounts(order) {
+  const mp = state.config?.manual_payment || {};
+  const acc = mp.accounts || {};
+  const rows = [];
+  if (order.method === 've_pago_movil') {
+    const a = acc.ve_pago_movil || {};
+    rows.push(['Titular', a.holder], ['Cédula / RIF', a.id], ['Teléfono', a.phone], ['Banco', a.bank]);
+  } else if (order.method === 've_transfer') {
+    const a = acc.ve_transfer || {};
+    rows.push(['Titular', a.holder], ['Cédula / RIF', a.id], ['Banco', a.bank], ['Número de cuenta', a.account]);
+  } else if (order.method === 'breb') {
+    rows.push(['Llave BRE-B', state.config?.breb?.merchant_key], ['Titular', acc.international?.holder]);
+  } else if (order.method === 'cash' || order.method === 've_cash') {
+    rows.push(['Instrucciones', acc.cash_note]);
+  } else {
+    const a = acc.international || {};
+    rows.push(['Titular', a.holder], ['Banco', a.bank], ['Cuenta / IBAN', a.account], ['SWIFT', a.swift], ['Zelle', a.zelle]);
+  }
+  return rows.filter(([, v]) => v && String(v).trim());
+}
+
+function manualPanel(order) {
+  const rows = manualAccounts(order);
+  const mp = state.config?.manual_payment || {};
+  const proofs = Array.isArray(order.proofs) ? order.proofs : [];
+  const last = proofs[0];
+  const pendingProof = last && last.status === 'pending';
+
+  const statusBox = pendingProof
+    ? `<div class="notice notice-info mt16">
+         <strong>Comprobante recibido</strong>
+         <div class="hint" style="margin-top:4px">Estamos verificando tu pago. Te avisaremos aquí mismo en cuanto se confirme.</div>
+       </div>`
+    : last && last.status === 'rejected'
+      ? `<div class="notice notice-error mt16">
+           <strong>Comprobante rechazado</strong>
+           <div class="hint" style="margin-top:4px">${esc(last.review_note || 'No pudimos validar el pago.')} Puedes subir uno nuevo.</div>
+         </div>`
+      : '';
+
+  const accountsBox = rows.length
+    ? `<div class="summary-list">
+         ${rows.map(([k, v]) => `<div class="sr"><span>${esc(k)}</span><strong class="mono">${esc(v)}</strong></div>`).join('')}
+         <div class="sr"><span>Monto exacto</span><strong>${order.amount_formatted}</strong></div>
+         <div class="sr"><span>Referencia</span><strong class="mono">${esc(order.public_id)}</strong></div>
+       </div>`
+    : `<div class="notice notice-warn">
+         <strong>Falta configurar la cuenta de recaudo</strong>
+         <div class="hint" style="margin-top:4px">El negocio aún no cargó los datos de cobro para este método. Escríbenos a ${esc(state.config?.support?.email || 'soporte@remesaya.app')} o por WhatsApp ${esc(state.config?.support?.whatsapp || '')} y te damos los datos para transferir.</div>
+       </div>`;
+
+  const uploadBox = pendingProof
+    ? ''
+    : `<div class="mt16">
+         <label class="field">
+           <span>Número de referencia / confirmación</span>
+           <input class="input" id="pf-ref" placeholder="Ej. 0045123" value="${esc(last?.reference || '')}" />
+         </label>
+         <label class="field">
+           <span>Comprobante (foto o PDF)</span>
+           <input class="input" id="pf-file" type="file" accept="image/*,application/pdf" />
+           <div class="hint">JPG, PNG, WEBP o PDF · máximo 8 MB.</div>
+         </label>
+         <label class="field">
+           <span>Nota para el equipo (opcional)</span>
+           <input class="input" id="pf-note" placeholder="Ej. transferí desde la cuenta de mi mamá" maxlength="200" />
+         </label>
+         <button class="btn btn-primary btn-block" id="pf-send">Enviar comprobante</button>
+       </div>`;
+
+  const info = methodInfo(order.method);
+  const isCash = order.method === 'cash' || order.method === 've_cash' || order.method === 'cash_cl' || order.method === 'cash_pe' || order.method === 'cash_ar' || order.method === 'cash_mx' || order.method === 'cash_ec' || order.method === 'cash_pa' || order.method === 'cash_do' || order.method === 'cash_es' || order.method === 'cash_us';
+  const title = isCash ? 'Paga en efectivo' : `Paga con ${info.name}`;
+  const subtitle = isCash
+    ? 'Sigue las instrucciones de abajo, paga el monto exacto y sube el comprobante. Verificamos el pago manualmente, normalmente en minutos.'
+    : `Transfiere el monto exacto a los datos de abajo y sube el comprobante. Verificamos el pago manualmente, normalmente en minutos.`;
+
+  return `
+    <div class="panel" style="margin:0">
+      <div class="card-title">${esc(title)}</div>
+      <div class="card-sub">${esc(subtitle)}</div>
+      ${mp.instructions ? `<div class="notice notice-info mt16">${esc(mp.instructions)}</div>` : ''}
+      <div class="mt16">${accountsBox}</div>
+      ${statusBox}
+      ${uploadBox}
+    </div>`;
+}
+
+async function uploadProof(publicId, { file, reference, note }) {
+  const qs = new URLSearchParams();
+  if (file?.name) qs.set('name', file.name);
+  if (reference) qs.set('reference', reference);
+  if (note) qs.set('note', note);
+  const res = await fetch(`/api/orders/${encodeURIComponent(publicId)}/proof?${qs.toString()}`, {
+    method: 'POST',
+    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+    body: file,
+  });
+  let data = {};
+  try {
+    data = await res.json();
+  } catch {
+    data = {};
+  }
+  if (!res.ok) throw new Error(data.error || `No se pudo subir el comprobante (${res.status}).`);
+  return data;
+}
+
+/** Refresca el estado de la orden cada pocos segundos mientras está pendiente. */
+function startStatusWatch(publicId) {
+  if (state.watchTimer) clearInterval(state.watchTimer);
+  state.watchTimer = setInterval(async () => {
+    if (!document.body.contains($('#app'))) {
+      clearInterval(state.watchTimer);
+      state.watchTimer = null;
+      return;
+    }
+    try {
+      const r = await api(`/orders/${publicId}/status`);
+      const prev = state.order?.status;
+      if (prev && r.status && r.status !== prev) {
+        clearInterval(state.watchTimer);
+        state.watchTimer = null;
+        state.order = null;
+        render();
+      }
+    } catch {
+      /* seguimos esperando */
+    }
+  }, 7000);
 }
 
 /* ---------------- checkout ---------------- */
@@ -1176,24 +1418,11 @@ async function checkoutView(publicId) {
     return '';
   }
 
-  const isDemo = ['demo', 'pse_simulator', 'breb_simulator', 'vepay_simulator'].includes(order.provider);
+  const isManual = order.provider === 'manual';
   let panel = '';
 
-  if (order.method === 'card_transparent') {
-    panel = `
-      <div class="panel" style="margin:0">
-        <div class="card-title">Datos de la tarjeta</div>
-        <div class="card-sub">Procesado de forma segura con SmartFields de dLocal Go.</div>
-        <label class="field"><span>Número de tarjeta</span><input class="input" id="cc-num" placeholder="4111 1111 1111 1111" inputmode="numeric" /></label>
-        <div class="row2">
-          <label class="field"><span>Vencimiento</span><input class="input" id="cc-exp" placeholder="MM/AA" /></label>
-          <label class="field"><span>CVV</span><input class="input" id="cc-cvv" placeholder="123" inputmode="numeric" /></label>
-        </div>
-        <label class="field"><span>Nombre del titular</span><input class="input" id="cc-name" placeholder="Como aparece en la tarjeta" /></label>
-        <label class="field"><span>Cuotas</span><select class="input" id="cc-inst"><option value="">1 cuota (sin interés)</option></select></label>
-        <button class="btn btn-primary btn-block" id="cc-pay">Pagar ${order.amount_formatted}</button>
-        <div class="hint mt8">Los datos de tu tarjeta nunca pasan por nuestros servidores: se tokenizan directamente con dLocal Go.</div>
-      </div>`;
+  if (isManual) {
+    panel = manualPanel(order);
   } else if (order.method === 'pse') {
     const banks = state.config?.pse?.banks || [];
     panel = `
@@ -1277,25 +1506,9 @@ async function checkoutView(publicId) {
           <div class="sr"><span>Monto exacto</span><strong>${order.amount_formatted}</strong></div>
           <div class="sr"><span>Referencia</span><strong class="mono">${esc(order.public_id)}</strong></div>
         </div>
-        <button class="btn btn-primary btn-block mt16" id="local-paid">Ya realicé el pago</button>
-        <div class="hint mt8">La confirmación llega automáticamente cuando el proveedor valida la operación.</div>
+        <div class="hint mt8">Estamos confirmando tu pago con el proveedor. Esta pantalla se actualiza sola.</div>
       </div>`;
   }
-
-  const demoBox = isDemo
-    ? `<div class="panel" style="margin:16px 0 0;border-color:rgba(255,207,77,0.35);background:rgba(255,207,77,0.05)">
-        <div class="flex between center gap12" style="flex-wrap:wrap">
-          <div>
-            <strong style="font-size:0.9rem">Modo demostración</strong>
-            <div class="hint" style="margin-top:4px">Esta operación usa el simulador. Puedes aprobar o rechazar el pago para probar el flujo completo.</div>
-          </div>
-          <div class="flex gap8">
-            <button class="btn btn-sm btn-ghost" id="demo-decline">Rechazar</button>
-            <button class="btn btn-sm btn-primary" id="demo-approve">Aprobar pago</button>
-          </div>
-        </div>
-      </div>`
-    : '';
 
   return `
   ${nav()}
@@ -1314,7 +1527,6 @@ async function checkoutView(publicId) {
           <div class="sr"><span>Comisión</span><strong>${order.fee_formatted}</strong></div>
         </div>
         ${panel}
-        ${demoBox}
       </div>
       <div class="hint mt16" style="text-align:center">¿Problemas con tu pago? Escríbenos a ${esc(state.config?.support?.email || 'soporte@remesaya.app')}</div>
     </div>
@@ -1322,17 +1534,8 @@ async function checkoutView(publicId) {
 }
 
 function bindCheckout(publicId) {
-  const approve = async (status) => {
-    try {
-      await api(`/orders/${publicId}/demo-${status}`, { method: 'POST' });
-      toast(status === 'approve' ? 'Pago aprobado. Entrega en proceso.' : 'Pago rechazado.', status === 'approve' ? 'ok' : 'err');
-      navigate(`/success/${publicId}`);
-    } catch (err) {
-      toast(err.message, 'err');
-    }
-  };
-  $('#demo-approve')?.addEventListener('click', () => approve('approve'));
-  $('#demo-decline')?.addEventListener('click', () => approve('decline'));
+  const current = state.order;
+  if (current && ['pending', 'processing'].includes(current.status)) startStatusWatch(publicId);
 
   document.querySelectorAll('#bank-grid .bank-item').forEach((el) => {
     el.addEventListener('click', () => {
@@ -1342,42 +1545,52 @@ function bindCheckout(publicId) {
     });
   });
 
-  $('#pse-pay')?.addEventListener('click', () => {
-    toast('Redirigiendo al banco (simulado)…');
-    setTimeout(() => approve('approve'), 900);
-  });
-
-  ['#breb-paid', '#cash-paid', '#ve-paid', '#hosted-pay', '#local-paid'].forEach((sel) => {
-    $(sel)?.addEventListener('click', () => {
-      const isDemo = ['demo', 'pse_simulator', 'breb_simulator', 'vepay_simulator'].includes(state.order?.provider);
-      if (isDemo) approve('approve');
-      else if (state.order?.checkout_url?.startsWith('http')) window.location.href = state.order.checkout_url;
-      else toast('Esperando confirmación del proveedor…');
-    });
-  });
-
-  $('#cc-pay')?.addEventListener('click', async (e) => {
+  // Envío del comprobante de pago manual.
+  $('#pf-send')?.addEventListener('click', async (e) => {
     const btn = e.currentTarget;
-    const num = ($('#cc-num')?.value || '').replace(/\s/g, '');
-    if (num.length < 13) return toast('Número de tarjeta inválido.', 'err');
+    const file = $('#pf-file')?.files?.[0];
+    const reference = ($('#pf-ref')?.value || '').trim();
+    const note = ($('#pf-note')?.value || '').trim();
+    if (!file) return toast('Adjunta la foto o el PDF del comprobante.', 'err');
+    if (file.size > 8 * 1024 * 1024) return toast('El comprobante no puede pasar de 8 MB.', 'err');
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner"></span> Procesando…';
+    btn.innerHTML = '<span class="spinner"></span> Enviando…';
     try {
-      const res = await api(`/orders/${publicId}/confirm`, {
-        method: 'POST',
-        body: JSON.stringify({ cardToken: `tok_demo_${num.slice(-4)}`, installmentsId: $('#cc-inst')?.value || undefined }),
-      });
-      if (res.requires_3ds && res.redirect_url) {
-        window.location.href = res.redirect_url;
-        return;
-      }
-      navigate(`/success/${publicId}`);
+      await uploadProof(publicId, { file, reference, note });
+      toast('Comprobante enviado. Estamos verificando tu pago.', 'ok');
+      state.order = null;
+      render();
     } catch (err) {
       toast(err.message, 'err');
       btn.disabled = false;
-      btn.textContent = 'Reintentar pago';
+      btn.textContent = 'Enviar comprobante';
     }
   });
+
+  const order = state.order || {};
+  const goToProvider = () => {
+    if (order.checkout_url && /^https?:/i.test(order.checkout_url)) {
+      window.location.href = order.checkout_url;
+      return true;
+    }
+    return false;
+  };
+
+  $('#pse-pay')?.addEventListener('click', () => {
+    if (goToProvider()) return;
+    toast('El banco aún no confirma el débito. Te avisaremos en esta pantalla.', '');
+    startStatusWatch(publicId);
+  });
+
+  ['#breb-paid', '#cash-paid', '#ve-paid', '#hosted-pay'].forEach((sel) => {
+    $(sel)?.addEventListener('click', () => {
+      if (goToProvider()) return;
+      toast('Estamos esperando la confirmación del pago. Esta pantalla se actualiza sola.', '');
+      startStatusWatch(publicId);
+    });
+  });
+
+
 }
 
 /* ---------------- success / tracking ---------------- */
@@ -1393,11 +1606,13 @@ async function successView(publicId) {
 
   const ok = ['approved', 'completed'].includes(order.status);
   const bad = ['rejected', 'declined', 'failed', 'cancelled'].includes(order.status);
+  const reviewing = !ok && !bad && order.provider === 'manual';
+  const delivering = ok && order.payout_status === 'pending';
 
   const timeline = [
     { t: 'Orden creada', d: order.created_at, done: true },
     { t: 'Pago confirmado', d: order.updated_at, done: ok },
-    { t: 'Entrega al beneficiario', d: ok ? order.updated_at : '—', done: order.status === 'completed' },
+    { t: 'Entrega al beneficiario', d: ok ? order.updated_at : '—', done: order.status === 'completed' || order.payout_status === 'completed' },
     { t: 'Comprobante disponible', d: ok ? order.updated_at : '—', done: ok },
   ];
 
@@ -1407,9 +1622,9 @@ async function successView(publicId) {
     <div class="checkout">
       <div class="card" style="text-align:center">
         <div style="font-size:3.4rem;line-height:1">${ok ? icon('checkCircle', 54) : bad ? icon('alert', 54) : icon('clock', 54)}</div>
-        <h2 class="mt16">${ok ? (order.metadata?.direction === 'receive' ? '¡Cobro exitoso!' : '¡Envío exitoso!') : bad ? 'El pago no se completó' : 'Procesando tu pago'}</h2>
-        <p class="muted mt8">${ok ? (order.metadata?.direction === 'receive' ? 'El dinero ya está disponible para ti.' : 'Tu beneficiario ya puede disponer del dinero.') : bad ? 'No se realizó ningún cargo. Puedes intentarlo de nuevo.' : 'Estamos confirmando la operación con el proveedor.'}</p>
-        <div class="mt24" style="font-size:2rem;font-weight:800">${order.destination_amount_formatted}</div>
+        <h2 class="mt16">${ok ? (order.metadata?.direction === 'receive' ? '¡Cobro exitoso!' : '¡Envío exitoso!') : bad ? 'El pago no se completó' : reviewing ? 'Comprobante en revisión' : 'Procesando tu pago'}</h2>
+        <p class="muted mt8">${delivering ? 'Confirmamos tu pago. Estamos entregando el dinero al beneficiario; te avisamos al completarse.' : ok ? (order.metadata?.direction === 'receive' ? 'El dinero ya está disponible para ti.' : 'Tu beneficiario ya puede disponer del dinero.') : bad ? 'No se realizó ningún cargo. Puedes intentarlo de nuevo.' : reviewing ? 'Recibimos tu comprobante. Un administrador lo verifica y la entrega se libera al confirmarse.' : 'Estamos confirmando la operación con el proveedor.'}</p>
+        <div class="mt24" style="font-size:2rem;font-weight:800">${order.destination_amount_formatted || order.amount_formatted}</div>
         <div class="hint">para ${esc(order.beneficiary_name)} · ${esc(order.beneficiary_doc_type)}-***${esc(order.beneficiary_doc_last4)}</div>
         <div class="mt16">${statusBadge(order.status)}</div>
         <div class="summary-list mt24" style="text-align:left">
@@ -1417,13 +1632,13 @@ async function successView(publicId) {
           <div class="sr"><span>Monto enviado</span><strong>${order.amount_formatted}</strong></div>
           <div class="sr"><span>Comisión</span><strong>${order.fee_formatted}</strong></div>
           <div class="sr"><span>Vía de entrega</span><strong>${railLabel(order.rail)}</strong></div>
-          <div class="sr"><span>Tasa aplicada</span><strong>1 ${esc(order.currency)} = ${order.fx_rate} ${esc(order.destination_currency)}</strong></div>
+          <div class="sr"><span>Tasa aplicada</span><strong>1 ${esc(order.currency)} = ${fmtRate(order.fx_rate)} ${esc(order.destination_currency)}</strong></div>
         </div>
         <div class="timeline mt24" style="text-align:left">
           ${timeline.map((x) => `<div class="tl-item"><div class="tl-dot ${x.done ? 'done' : ''}">${x.done ? icon('check', 12) : '•'}</div><div class="tl-body"><strong>${x.t}</strong><span>${esc(x.d)}</span></div></div>`).join('')}
         </div>
         <div class="flex gap12 mt16">
-          <a class="btn btn-ghost btn-block" href="/" data-link>Inicio</a>
+          ${reviewing ? `<a class="btn btn-ghost btn-block" href="/pay/${esc(order.public_id)}" data-link>Ver mi orden</a>` : '<a class="btn btn-ghost btn-block" href="/" data-link>Inicio</a>'}
           <button class="btn btn-primary btn-block" onclick="window.print()">Guardar comprobante</button>
         </div>
         ${ok ? `<div class="hint mt16">Guarda tu número de orden: <strong class="mono">${esc(order.public_id)}</strong></div>` : ''}
@@ -1478,7 +1693,8 @@ function defaultDraft(direction) {
   const d = state.draft;
   d.direction = direction;
   d.payerCountry = 'US';
-  d.country = direction === 'receive' ? 'CL' : 'VE';
+  // En ambos flujos el destino natural es Venezuela (el dueño recibe allí).
+  d.country = 'VE';
   const allowed = methodsFor(d.payerCountry);
   if (!allowed.includes(d.method)) d.method = allowed[0];
   const rails = railsFor(d.country);
@@ -1545,7 +1761,9 @@ async function renderRoute() {
     bind = bindWizard;
   } else if (parts[0] === 'pay' && parts[1]) {
     html = await checkoutView(parts[parts.length - 1]);
-    if (html) bind = () => bindCheckout(parts[parts.length - 1]);
+    // checkoutView pudo redirigir (orden ya pagada): no pisar la pantalla nueva.
+    if (!html) return;
+    bind = () => bindCheckout(parts[parts.length - 1]);
   } else if (parts[0] === 'success' && parts[1]) {
     html = await successView(parts[1]);
   } else {
@@ -1726,7 +1944,7 @@ function bindLanding() {
         <div class="quote-row"><span>${direction === 'receive' ? 'Recibes' : 'Env\u00edas'}</span><strong>${q.destination_amount_formatted}</strong></div>
         <div class="quote-row"><span>Comisi\u00f3n (${q.fee_percent}%)</span><strong>${q.fee_formatted}</strong></div>
         <div class="quote-row total"><span>${direction === 'receive' ? 'Paga quien te env\u00eda' : 'Total a pagar'}</span><strong>${q.total_formatted}</strong></div>
-        <div class="quote-row"><span>Tasa</span><strong>1 ${q.currency} = ${q.fx_rate} ${q.destination_currency}</strong></div>`;
+        <div class="quote-row"><span>Tasa</span><strong>1 ${q.currency} = ${fmtRate(q.fx_rate)} ${q.destination_currency}</strong></div>`;
     } catch (err) {
       quoteEl.innerHTML = `<div class="quote-row"><span style="color:var(--danger)">${esc(err.message)}</span></div>`;
     }

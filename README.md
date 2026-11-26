@@ -140,7 +140,6 @@ npm test
 | `DOC_PEPPER` | Pepper HMAC para cédulas. |
 | `DLOCAL_API_KEY` / `DLOCAL_SECRET_KEY` | Credenciales dLocal Go. |
 | `SMARTFIELDS_API_KEY` | Tarjeta transparente. |
-| `DEMO_FALLBACK` | `true` = modo demo si las claves fallan. |
 | `BREB_MODE` / `BREB_API_URL` / `BREB_API_KEY` | BRE-B Colombia. |
 | `PSE_MODE` / `PSE_API_URL` / `PSE_API_KEY` | PSE Colombia. |
 | `VE_MODE` / `VE_API_URL` / `VE_API_KEY` | Venezuela VES. |
@@ -148,21 +147,30 @@ npm test
 | `FEE_PERCENT` / `FEE_FIXED_CENTS` | Comisión. |
 | `VES_RATE` / `COP_RATE` | Tasas de conversión. |
 
-Cada proveedor (`BRE-B`, `PSE`, `VE`) funciona en tres modos:
-`live` (contrato real), `simulator` (pruebas) y `auto` (usa live si hay claves,
-si no simulador).
+Cada proveedor (`BRE-B`, `PSE`, `VE`) funciona en dos modos reales:
+`live` (contrato con el participante/agregador) y `manual` (cobro por
+transferencia o Pago Móvil a la cuenta del negocio, con comprobante que el
+administrador verifica). **No existe modo simulado**: si un riel no tiene
+credenciales, la orden se crea como cobro manual y el dinero se mueve de verdad.
 
 ---
 
-## 5. Modo demostración
+## 5. Cómo funciona sin credenciales de pasarela
 
-Las credenciales de dLocal Go entregadas inicialmente responden
-`403 Invalid Credentials`. Con `DEMO_FALLBACK=true` la plataforma **sigue
-operando en modo demostración**: crea órdenes, aprueba pagos y ejecuta entregas
-instantáneas simuladas, de modo que todo el flujo es verificable de punta a punta.
+La plataforma **nunca simula un pago**. Cuando una vía no tiene credenciales:
 
-Para pasar a **producción real** basta con colocar claves válidas en `.env`; no
-se requiere cambiar código. El modo demo se desactiva con `DEMO_FALLBACK=false`.
+1. La tarjeta no se ofrece en el checkout (requiere dLocal Go en vivo).
+2. BRE-B, PSE y los métodos locales se convierten en **cobro manual**: el
+   cliente transfiere el monto exacto a la cuenta de recaudo configurada en
+   *Admin → Pagos → Cuentas de recaudo*, sube la foto o PDF del comprobante y
+   el administrador lo aprueba desde *Admin → Órdenes → Revisar*.
+3. Al aprobar, la orden se asienta en el ledger y se crea la entrega al
+   beneficiario. Si el riel de entrega está en vivo se envía automáticamente;
+   si no, queda **pendiente** y el dueño la paga y la marca como pagada desde
+   *Admin → Retiros / Pagos*.
+
+Para activar el modo en vivo basta con colocar credenciales válidas en `.env`
+(o en las variables de Render). No se requiere cambiar código.
 
 ---
 
@@ -192,7 +200,7 @@ Público:
 - `POST /api/quote` — cotización con comisión y conversión.
 - `POST /api/orders` — crea orden y devuelve `checkout_url`.
 - `GET /api/orders/:id` — seguimiento.
-- `POST /api/orders/:id/demo-approve` — aprueba en modo demo.
+- `POST /api/orders/:id/proof` — sube el comprobante del cobro manual.
 - `POST /api/validate-document` — valida cédula venezolana.
 
 Admin (sesión + CSRF):
@@ -200,7 +208,9 @@ Admin (sesión + CSRF):
 - `GET /api/admin/stats`, `/orders`, `/balance`, `/ledger`, `/withdrawals`,
   `/payouts`, `/beneficiaries`, `/settings`, `/audit`, `/webhooks`, `/rates`
 - `POST /api/admin/orders/:id/refund`
+- `POST /api/admin/orders/:id/review` — aprueba o rechaza el comprobante.
 - `POST /api/admin/withdrawals`, `/payouts`, `/payouts/dlocal`, `/fees/sweep`
+- `POST /api/admin/withdrawals/:id/paid`, `/payouts/:id/paid` — cierra una entrega pagada por fuera.
 - `PUT /api/admin/settings`
 
 Webhooks:

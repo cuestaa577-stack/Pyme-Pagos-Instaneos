@@ -46,6 +46,7 @@ const globalLimiter = rateLimit({
   max: 300,
   standardHeaders: true,
   legacyHeaders: false,
+  message: { error: 'Demasiadas solicitudes. Espera un minuto e inténtalo de nuevo.' },
 });
 app.use('/api', globalLimiter);
 
@@ -67,10 +68,34 @@ app.use((req, res) => {
 
 // Manejador de errores central.
 app.use((err, req, res, next) => {
-  const status = err.status && err.status >= 400 ? err.status : 500;
-  if (status >= 500) console.error('[error]', err);
+  let status = err.status && err.status >= 400 ? err.status : 500;
+  let message = err.message || 'Error interno del servidor.';
+
+  // Errores de parseo/cuerpo: mensajes en español, nunca el texto crudo del parser.
+  if (err.type === 'entity.parse.failed') {
+    status = 400;
+    message = 'Los datos enviados no son válidos. Revisa el formulario e inténtalo de nuevo.';
+  } else if (err.type === 'entity.too.large') {
+    status = 413;
+    message = 'El archivo o los datos son demasiado grandes.';
+  } else if (err.type === 'encoding.unsupported' || err.type === 'charset.unsupported') {
+    status = 415;
+    message = 'Formato de contenido no soportado.';
+  } else if (err.code === 'LIMIT_FILE_SIZE') {
+    status = 413;
+    message = 'El archivo supera el tamaño máximo permitido.';
+  } else if (status >= 500) {
+    console.error('[error]', err);
+    // Los servicios lanzan mensajes pensados para el usuario ("Saldo insuficiente",
+    // "Beneficiario no encontrado"…). Solo ocultamos detalles técnicos.
+    if (/SQLITE|SqliteError|Cannot read propert|is not a function|undefined is not/i.test(message)) {
+      message = 'Ocurrió un error inesperado. Inténtalo de nuevo en unos segundos.';
+    }
+  }
+
+  if (res.headersSent) return next(err);
   res.status(status).json({
-    error: err.message || 'Error interno del servidor.',
+    error: message,
     ...(err.details ? { details: err.details } : {}),
     ...(err.publicId ? { public_id: err.publicId } : {}),
   });
@@ -106,8 +131,10 @@ process.on('exit', releaseLock);
 
 const server = app.listen(config.port, '0.0.0.0', () => {
   console.log(`\n  ${config.appName} escuchando en http://localhost:${config.port}`);
-  console.log(`  Entorno: ${config.env} | Demo fallback: ${config.demoFallback}`);
-  console.log(`  BRE-B: ${require('./providers/breb').mode()} | PSE: ${require('./providers/pse').mode()}`);
+  console.log(`  Entorno: ${config.env} | Modo: real (sin simulaci\u00f3n)`);
+  console.log(
+    `  BRE-B: ${require('./providers/breb').mode()} | PSE: ${require('./providers/pse').mode()} | VE: ${require('./providers/vepay').mode()}`
+  );
   console.log(`  Base de datos: ${path.join(config.dataDir, config.dbFile)}\n`);
 });
 

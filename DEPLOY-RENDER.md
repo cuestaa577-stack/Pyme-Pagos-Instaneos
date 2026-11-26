@@ -7,11 +7,11 @@ Esta guía explica cómo subir la plataforma a **Render** y qué variables de en
 ## 1. Antes de empezar: qué es y qué no es "real"
 
 - **La aplicación es real y funciona.** Es un servidor Node.js completo con base de datos, doble partida contable, cifrado AES-256-GCM de documentos y cuentas, sesiones firmadas, CSRF, rate limiting y webhooks firmados.
-- **Los pagos reales dependen de tus credenciales.** Con `DEMO_FALLBACK=true` (por defecto) la plataforma opera en **modo demostración**: crea órdenes reales en la base de datos, mueve el ledger y permite aprobar/rechazar pagos desde el checkout. Para cobrar dinero de verdad hay que conectar las pasarelas:
+- **Los pagos reales dependen de tus credenciales.** La plataforma **no tiene modo demostración**: cada vía opera en vivo si tiene credenciales o, si no, como **cobro manual con comprobante** (el cliente transfiere a tu cuenta, sube el comprobante y tú lo apruebas). Para cobrar automáticamente hay que conectar las pasarelas:
   - **dLocal Go** → tarjetas (Visa/Mastercard/Amex) y SmartFields.
   - **BRE-B** y **PSE** → cobros locales en Colombia.
   - **Proveedor vepay** → Pago Móvil, transferencia y efectivo en Venezuela.
-- Mientras no haya llaves de producción, la app funciona al 100 % en modo demo (útil para validar el flujo con clientes).
+- Mientras no haya llaves de producción, la app cobra por **transferencia manual verificada**: dinero real, sin simulaciones.
 
 ---
 
@@ -54,7 +54,6 @@ Esta guía explica cómo subir la plataforma a **Render** y qué variables de en
 | `DOC_PEPPER` | Otro secreto aleatorio largo. `openssl rand -hex 32` |
 | `ADMIN_EMAIL` | `cuestaa577@gmail.com` |
 | `ADMIN_PASSWORD` | Tu clave de administrador. **Si contiene `#`, ponla entre comillas dobles.** |
-| `DEMO_FALLBACK` | `true` para probar sin pasarelas; `false` en producción real |
 | `TRUST_PROXY` | `true` (Render está detrás de proxy) |
 | `DATA_DIR` | `/var/data` ← carpeta del disco persistente donde vive la base y los respaldos |
 | `DB_FILE` | `remesaya.db` (opcional, nombre del archivo SQLite) |

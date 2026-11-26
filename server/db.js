@@ -215,6 +215,27 @@ CREATE TABLE IF NOT EXISTS idempotency (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (scope, key)
 );
+
+-- Comprobantes de pago subidos por el cliente para las vías manuales
+-- (transferencia, Pago Móvil, depósito, Zelle). El dinero se mueve de verdad
+-- fuera de la app; aquí queda la prueba y el administrador la verifica.
+CREATE TABLE IF NOT EXISTS payment_proofs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  transaction_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+  file_name TEXT,
+  original_name TEXT,
+  mime TEXT,
+  size_bytes INTEGER,
+  reference TEXT,
+  note TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',   -- pending | approved | rejected
+  reviewed_by TEXT,
+  reviewed_at TEXT,
+  review_note TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_proofs_transaction ON payment_proofs(transaction_id);
+CREATE INDEX IF NOT EXISTS idx_proofs_status ON payment_proofs(status);
 `);
 
 /**
@@ -267,6 +288,24 @@ const DEFAULT_SETTINGS = {
   ve_merchant_phone: '',
   ve_merchant_bank: '',
   ve_merchant_account: '',
+  // Cuentas de recaudo que se muestran al cliente en el pago manual. Son los
+  // datos reales del negocio: el cliente transfiere ahí y sube el comprobante.
+  collect_ve_pago_movil_holder: '',
+  collect_ve_pago_movil_id: '',
+  collect_ve_pago_movil_phone: '',
+  collect_ve_pago_movil_bank: '',
+  collect_ve_transfer_holder: '',
+  collect_ve_transfer_id: '',
+  collect_ve_transfer_bank: '',
+  collect_ve_transfer_account: '',
+  collect_intl_holder: '',
+  collect_intl_bank: '',
+  collect_intl_account: '',
+  collect_intl_swift: '',
+  collect_intl_zelle: '',
+  collect_cash_note: '',
+  collect_instructions: '',
+  manual_review: '1',
   // Interruptores de vías de pago (1 = activa, 0 = desactivada).
   pay_card: '1',
   pay_pse: '1',
