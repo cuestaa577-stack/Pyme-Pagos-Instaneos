@@ -1,0 +1,43 @@
+services:
+  remesaya:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: remesaya:latest
+    container_name: remesaya
+    restart: unless-stopped # se levanta solo tras reinicio del host o crash
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      # Dentro del contenedor los datos SIEMPRE van al volumen /data.
+      DATA_DIR: /data
+      DB_FILE: remesaya.db
+      TRUST_PROXY: "true"
+      BACKUP_INTERVAL_HOURS: "6"
+      BACKUP_KEEP: "20"
+      KEEPALIVE_MINUTES: "10"
+    volumes:
+      # Volumen con nombre: sobrevive a `docker compose down` y a reinicios.
+      # Solo se borra con `docker compose down -v` (no lo hagas en producción).
+      - remesaya-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    # Le damos 20 s para hacer el checkpoint del WAL antes del SIGKILL.
+    stop_grace_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  remesaya-data:
+    name: remesaya-data

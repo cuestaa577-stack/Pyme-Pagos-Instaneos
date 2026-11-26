@@ -231,4 +231,16 @@ Resultado: 32 ok, 0 fallos
 
 ---
 
+## 10. Documentación
+
+| Documento | Para qué sirve |
+|---|---|
+| [`DEPLOY-RENDER.md`](DEPLOY-RENDER.md) | Desplegar en Render paso a paso, variables, respaldos cifrados, resistencia a reinicios y solución al error `EACCES /var/data` |
+| [`VARIABLES-RENDER.md`](VARIABLES-RENDER.md) | Bloque `.env` listo para copiar y pegar, las 6 variables imprescindibles y tabla de errores |
+| [`DOCKER.md`](DOCKER.md) | Correr la app en Docker / Docker Compose, volumen persistente, HTTPS con Caddy, respaldos dentro del contenedor |
+| [`APK.md`](APK.md) | Instalar como app (PWA) en Android, iPhone y escritorio; generar el APK con Bubblewrap, PWABuilder o Capacitor |
+| [`render.yaml`](render.yaml) | Blueprint de Render (servicio + disco + variables) |
+
+---
+
 © RemesaYa — plataforma de propiedad del titular del repositorio.

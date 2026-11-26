@@ -808,3 +808,61 @@ svg.i { display: inline-block; vertical-align: -0.18em; flex: 0 0 auto; }
   .app-visual { order: -1; }
   .phone { transform: none; width: 210px; height: 410px; }
 }
+
+/* ---------------- resistencia a reinicios ---------------- */
+.reconnect {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: grid;
+  place-items: center;
+  background: rgba(4, 8, 20, 0.82);
+  backdrop-filter: blur(6px);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  padding: 20px;
+}
+.reconnect.show { opacity: 1; }
+.reconnect-card {
+  background: #0b1220;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 18px;
+  padding: 32px 28px;
+  max-width: 380px;
+  text-align: center;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+}
+.reconnect-card h4 {
+  margin: 14px 0 8px;
+  font-size: 1.15rem;
+  color: #fff;
+}
+.reconnect-card p {
+  margin: 0 0 18px;
+  color: #9aa7bd;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.reconnect-spin {
+  width: 42px;
+  height: 42px;
+  margin: 0 auto;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.12);
+  border-top-color: #ffd400;
+  animation: ry-spin 0.9s linear infinite;
+}
+@keyframes ry-spin { to { transform: rotate(360deg); } }
+
+.fatal {
+  max-width: 480px;
+  margin: 12vh auto;
+  padding: 32px 26px;
+  text-align: center;
+  background: #0b1220;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 18px;
+}
+.fatal h2 { margin: 0 0 10px; font-size: 1.25rem; color: #fff; }
+.fatal p { color: #9aa7bd; font-size: 0.92rem; line-height: 1.55; }
+.fatal .btn { margin: 8px 4px 0; }

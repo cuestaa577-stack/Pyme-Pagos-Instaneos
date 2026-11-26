@@ -1,11 +1,54 @@
 'use strict';
 require('dotenv').config();
 
+const fs = require('fs');
 const path = require('path');
 
 function bool(value, fallback = false) {
   if (value === undefined) return fallback;
   return ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
+}
+
+/**
+ * Resuelve la carpeta de datos SIN poder tumbar la app.
+ *
+ * En Render la ruta del disco cambia según cómo lo montes. Si DATA_DIR apunta a
+ * una ruta que no existe o donde no tenemos permiso (típico: /var/data cuando
+ * el disco quedó en otra ruta), antes la app moría con EACCES y el servicio
+ * entraba en bucle de reinicios. Ahora probamos candidatos en orden y usamos el
+ * primero que sea escribible; el último recurso siempre funciona porque está
+ * dentro del proyecto.
+ */
+function resolveDataDir() {
+  const candidates = [];
+  if (process.env.DATA_DIR) candidates.push(path.resolve(process.env.DATA_DIR));
+  // Rutas típicas de un disco persistente en Render.
+  candidates.push('/var/data');
+  candidates.push(path.join(__dirname, '..', 'data'));
+  candidates.push(path.join(process.cwd(), 'data'));
+  candidates.push(path.join(require('os').tmpdir(), 'remesaya-data'));
+
+  for (const dir of candidates) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      // Comprobamos escritura real, no solo que exista.
+      const probe = path.join(dir, `.write-test-${process.pid}`);
+      fs.writeFileSync(probe, 'ok');
+      fs.unlinkSync(probe);
+      if (process.env.DATA_DIR && path.resolve(process.env.DATA_DIR) !== dir) {
+        console.warn(
+          `[config] DATA_DIR=${process.env.DATA_DIR} no es escribible; usando ${dir}. ` +
+            'Revisa que el disco persistente esté montado en esa ruta.'
+        );
+      }
+      return dir;
+    } catch {
+      /* siguiente candidato */
+    }
+  }
+  // Si ni siquiera el temporal funciona, devolvemos la ruta pedida y que falle
+  // explícitamente más adelante con un mensaje claro.
+  return path.resolve(process.env.DATA_DIR || path.join(__dirname, '..', 'data'));
 }
 
 const config = {
@@ -14,9 +57,9 @@ const config = {
   port: Number(process.env.PORT || 3000),
   appUrl: process.env.APP_URL || 'http://localhost:3000',
   publicBaseUrl: (process.env.PUBLIC_BASE_URL || 'http://localhost:3000').replace(/\/$/, ''),
-  // Carpeta donde vive la base SQLite. En Render debe apuntar al disco persistente:
-  // DATA_DIR=/opt/render/project/src/app/data  (o /var/data si montas ahí el disco)
-  dataDir: path.resolve(process.env.DATA_DIR || path.join(__dirname, '..', 'data')),
+  // Carpeta donde vive la base SQLite. Se resuelve a la primera ruta escribible
+  // (ver resolveDataDir) para que un disco mal montado no tumbe el servicio.
+  dataDir: resolveDataDir(),
   // Permite usar otro nombre de archivo (útil para respaldos o multi-entorno).
   dbFile: process.env.DB_FILE || 'remesaya.db',
   // Respaldo automático: cada N horas se copia la base a <dataDir>/backups.

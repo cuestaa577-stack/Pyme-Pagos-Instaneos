@@ -219,24 +219,132 @@ function toast(message, type = '') {
   el._t = setTimeout(() => (el.className = 'toast'), 3800);
 }
 
-async function api(path, options = {}) {
-  const res = await fetch(`/api${path}`, {
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-    ...options,
-  });
-  let data = null;
-  try {
-    data = await res.json();
-  } catch {
-    data = {};
+/* ---------------- red resistente a reinicios ---------------- */
+/*
+ * Render puede reiniciar el contenedor en cualquier momento (deploy, OOM,
+ * suspensión). Durante esos segundos el servidor responde 502/503/504 o la
+ * conexión se corta. En vez de mostrar una pantalla en blanco o un error
+ * crudo, reintentamos con espera creciente y mostramos "Reconectando…".
+ */
+const NET = {
+  attempts: 4,
+  baseDelay: 600,
+  banner: null,
+  waiting: false,
+};
+
+const RETRY_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function showReconnect(show) {
+  let el = document.getElementById('ry-reconnect');
+  if (show) {
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'ry-reconnect';
+      el.className = 'reconnect';
+      el.innerHTML = `
+        <div class="reconnect-card">
+          <div class="reconnect-spin"></div>
+          <h4>Reconectando…</h4>
+          <p>El servidor se está reiniciando. Tus datos están a salvo; espera un momento.</p>
+          <button class="btn btn-ghost" id="ry-reconnect-retry">Reintentar ahora</button>
+        </div>`;
+      document.body.appendChild(el);
+      const btn = el.querySelector('#ry-reconnect-retry');
+      if (btn) btn.addEventListener('click', () => location.reload());
+    }
+    requestAnimationFrame(() => el.classList.add('show'));
+  } else if (el) {
+    el.classList.remove('show');
+    setTimeout(() => el.remove(), 250);
   }
-  if (!res.ok) {
+}
+
+/** Espera activa hasta que el servidor vuelva (máx. ~40 s). */
+async function waitForServer(maxMs = 40000) {
+  const start = Date.now();
+  let delay = 800;
+  while (Date.now() - start < maxMs) {
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 4000);
+      const r = await fetch('/api/ping', { cache: 'no-store', signal: ctrl.signal });
+      clearTimeout(t);
+      if (r.ok) return true;
+    } catch {
+      /* seguimos esperando */
+    }
+    await sleep(delay);
+    delay = Math.min(delay * 1.6, 4000);
+  }
+  return false;
+}
+
+async function api(path, options = {}) {
+  const method = (options.method || 'GET').toUpperCase();
+  // Solo reintentamos operaciones idempotentes: reintentar un POST podría
+  // duplicar una orden o un pago.
+  const idempotent = method === 'GET' || method === 'HEAD';
+  const maxAttempts = idempotent ? NET.attempts : 1;
+  let lastErr = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let res;
+    try {
+      res = await fetch(`/api${path}`, {
+        headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+        cache: 'no-store',
+        ...options,
+      });
+    } catch (netErr) {
+      lastErr = new Error('Sin conexión con el servidor.');
+      lastErr.offline = true;
+      if (attempt < maxAttempts) {
+        if (attempt === 1) showReconnect(true);
+        await sleep(NET.baseDelay * Math.pow(1.7, attempt - 1));
+        continue;
+      }
+      showReconnect(false);
+      throw lastErr;
+    }
+
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {
+      data = {};
+    }
+
+    if (res.ok) {
+      if (NET.waiting) {
+        NET.waiting = false;
+        showReconnect(false);
+      }
+      return data;
+    }
+
+    // Servidor reiniciándose: esperamos a que vuelva y reintentamos.
+    if (RETRY_STATUS.has(res.status) && attempt < maxAttempts) {
+      NET.waiting = true;
+      showReconnect(true);
+      if (res.status === 503) await waitForServer(15000);
+      else await sleep(NET.baseDelay * Math.pow(1.7, attempt - 1));
+      continue;
+    }
+
     const err = new Error(data.error || `Error ${res.status}`);
     err.status = res.status;
     err.data = data;
+    if (RETRY_STATUS.has(res.status)) showReconnect(false);
     throw err;
   }
-  return data;
+
+  showReconnect(false);
+  throw lastErr || new Error('No se pudo contactar al servidor.');
 }
 
 function navigate(path, replace = false) {
@@ -1325,12 +1433,44 @@ async function successView(publicId) {
 }
 
 /* ---------------- router ---------------- */
+const CONFIG_CACHE_KEY = 'ry_config_v1';
+
+function readConfigCache() {
+  try {
+    const raw = localStorage.getItem(CONFIG_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    // La caché caduca a los 7 días para no mostrar tasas eternamente viejas.
+    if (!parsed || !parsed.at || Date.now() - parsed.at > 7 * 24 * 3600 * 1000) return null;
+    return parsed.data;
+  } catch {
+    return null;
+  }
+}
+
+function writeConfigCache(data) {
+  try {
+    localStorage.setItem(CONFIG_CACHE_KEY, JSON.stringify({ at: Date.now(), data }));
+  } catch {
+    /* cuota llena: no es crítico */
+  }
+}
+
 async function ensureConfig() {
   if (state.config) return;
   try {
     state.config = await api('/config');
+    writeConfigCache(state.config);
   } catch {
-    state.config = {};
+    // Si el servidor está reiniciando, usamos la última configuración buena:
+    // la app sigue navegable en vez de quedarse en blanco.
+    state.config = readConfigCache() || {};
+    if (!Object.keys(state.config).length) {
+      state.config = {};
+      toast('No pudimos cargar la configuración. Revisa tu conexión.', 'err');
+    } else {
+      toast('Mostrando datos guardados mientras el servidor vuelve.', '');
+    }
   }
 }
 
@@ -1351,6 +1491,26 @@ function defaultDraft(direction) {
 }
 
 async function render() {
+  try {
+    await renderRoute();
+  } catch (err) {
+    // Ningún fallo debe dejar la pantalla en blanco.
+    console.error('[render]', err);
+    const root = app();
+    if (!root.innerHTML.trim() || root.dataset.lastPath !== location.pathname) {
+      root.innerHTML = `
+        <div class="fatal">
+          <h2>No pudimos cargar esta pantalla</h2>
+          <p>${esc(err.message || 'Error inesperado.')}</p>
+          <p class="muted">Si el servicio se está reiniciando, espera unos segundos.</p>
+          <button class="btn btn-primary" onclick="location.reload()">Reintentar</button>
+          <a class="btn btn-ghost" href="/" data-link>Ir al inicio</a>
+        </div>`;
+    }
+  }
+}
+
+async function renderRoute() {
   await ensureConfig();
   const path = window.location.pathname.replace(/\/+$/, '') || '/';
   const parts = path.split('/').filter(Boolean);
@@ -1394,6 +1554,7 @@ async function render() {
   }
 
   app().innerHTML = html;
+  app().dataset.lastPath = path;
   if (bind) bind();
 
   document.querySelectorAll('[data-link]').forEach((a) => {

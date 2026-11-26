@@ -5,8 +5,25 @@ const Database = require('better-sqlite3');
 const bcrypt = require('bcryptjs');
 const config = require('./config');
 
-fs.mkdirSync(config.dataDir, { recursive: true });
-const db = new Database(path.join(config.dataDir, config.dbFile));
+// La carpeta ya la validó config.resolveDataDir(), pero nunca está de más:
+// un fallo aquí antes mataba el proceso con EACCES y Render reiniciaba en bucle.
+try {
+  fs.mkdirSync(config.dataDir, { recursive: true });
+} catch (err) {
+  console.error(`[db] no se pudo crear ${config.dataDir}: ${err.message}`);
+}
+
+const DB_PATH = path.join(config.dataDir, config.dbFile);
+let db;
+try {
+  db = new Database(DB_PATH);
+} catch (err) {
+  console.error(`[db] no se pudo abrir ${DB_PATH}: ${err.message}`);
+  // Último recurso: base en memoria para que el servicio siga respondiendo
+  // (los datos no persistirán, pero la app no se cae y el health check avisa).
+  db = new Database(':memory:');
+  console.error('[db] ATENCIÓN: usando base en memoria; revisa el disco persistente.');
+}
 db.pragma('journal_mode = WAL');
 // FULL: cada commit se sincroniza a disco antes de confirmar. Cuesta algo de
 // rendimiento pero garantiza que un kill -9 o un reinicio de Render no pierda

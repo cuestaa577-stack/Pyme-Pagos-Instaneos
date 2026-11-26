@@ -137,12 +137,13 @@ function restoreNewestValid() {
 
 function run() {
   say('verificando estado de la base…');
+  // config.dataDir ya viene resuelta a una ruta escribible; si aun así falla,
+  // seguimos adelante: el servidor tiene su propio respaldo (base en memoria).
   try {
     fs.mkdirSync(config.dataDir, { recursive: true });
     fs.mkdirSync(BACKUP_DIR, { recursive: true });
   } catch (err) {
-    say(`no se pudo preparar ${config.dataDir}: ${err.message}`);
-    return;
+    say(`aviso: no se pudo preparar ${config.dataDir}: ${err.message} (se continúa)`);
   }
 
   cleanStaleLock();

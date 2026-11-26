@@ -6,7 +6,7 @@
  */
 'use strict';
 
-const VERSION = 'remesaya-v1';
+const VERSION = 'remesaya-v3';
 const SHELL = `${VERSION}-shell`;
 const RUNTIME = `${VERSION}-runtime`;
 
@@ -62,8 +62,11 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(req)
         .then((res) => {
-          const copy = res.clone();
-          caches.open(SHELL).then((c) => c.put('/index.html', copy)).catch(() => {});
+          // Nunca guardamos una página de error de Render como si fuera la app.
+          if (res && res.ok) {
+            const copy = res.clone();
+            caches.open(SHELL).then((c) => c.put('/index.html', copy)).catch(() => {});
+          }
           return res;
         })
         .catch(async () => {
@@ -74,7 +77,25 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Estáticos: cache-first + actualización en segundo plano.
+  // Código y estilos: RED PRIMERO. Así un deploy nuevo llega de inmediato y
+  // nunca se sirve JS viejo (que rompería la app contra un API nuevo).
+  const isCode = /\.(js|css|webmanifest)$/.test(url.pathname);
+  if (isCode) {
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          if (res && res.ok) {
+            const copy = res.clone();
+            caches.open(RUNTIME).then((c) => c.put(req, copy)).catch(() => {});
+          }
+          return res;
+        })
+        .catch(async () => (await caches.match(req)) || Response.error())
+    );
+    return;
+  }
+
+  // Imágenes e iconos: cache-first (cambian poco).
   event.respondWith(
     caches.match(req).then((cached) => {
       const network = fetch(req)
@@ -85,7 +106,7 @@ self.addEventListener('fetch', (event) => {
           }
           return res;
         })
-        .catch(() => cached);
+        .catch(() => cached || Response.error());
       return cached || network;
     })
   );

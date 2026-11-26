@@ -262,3 +262,155 @@ Se hace `wal_checkpoint(TRUNCATE)` y se cierra la base. Render espera hasta `max
 - Rota cualquier token o llave que hayas pegado en un chat público (por ejemplo, un token `ghp_…` de GitHub): revócalo en <https://github.com/settings/tokens>.
 - Usa HTTPS (Render lo da gratis) y mantén `TRUST_PROXY=true` para que el rate limiting vea la IP real.
 - Los documentos y cuentas se guardan cifrados; si pierdes `DATA_ENCRYPTION_KEY`, los datos existentes **no se pueden descifrar**. Guárdala en un gestor de secretos.
+
+---
+
+## 9. Si el deploy falla con `EACCES: permission denied, mkdir '/var/data'`
+
+Ese error significa una sola cosa: **el disco persistente no está montado en
+`/var/data`**, o está montado ahí pero sin permisos de escritura. El proceso de
+Render corre como usuario sin privilegios y no puede crear la carpeta.
+
+```
+[preflight] no se pudo preparar /var/data: EACCES: permission denied, mkdir '/var/data'
+Error: EACCES: permission denied, mkdir '/var/data'
+    at Object.mkdirSync (node:fs:1410:26)
+    at /opt/render/project/src/server/db.js:8:4
+Exited with status 1
+```
+
+### Qué hace ahora la app (auto-reparación)
+
+A partir de esta versión, `server/config.js` **prueba varios candidatos** antes de
+rendirse y escribe de verdad un archivo de prueba en cada uno:
+
+1. `DATA_DIR` (si lo definiste)
+2. `/var/data`
+3. `<repo>/data`
+4. `<cwd>/data`
+5. `<tmp>/remesaya-data`
+
+El primero en el que consigue escribir gana, y deja un aviso en el log:
+
+```
+[config] DATA_DIR=/var/data no es escribible; usando /opt/render/project/src/data.
+```
+
+Además `server/db.js` ya no revienta: si no puede abrir la base, cae a una base
+en memoria y **el servicio queda vivo** en vez de entrar en bucle de reinicio.
+Y `server/scripts/preflight.js` convierte el fallo de `mkdir` en un aviso.
+
+> Esto evita la caída, pero **no sustituye al disco persistente**. Una base en
+> memoria se borra en cada reinicio. Hay que arreglar el montaje.
+
+### Cómo arreglarlo de verdad
+
+1. Ve a **Render → tu servicio → Disks**.
+2. Comprueba el **Mount Path**. Debe ser exactamente `/var/data`.
+   Si tu disco está montado en otra ruta (por ejemplo
+   `/opt/render/project/src/app/data`), usa esa ruta.
+3. Ve a **Environment** y define:
+
+   ```
+   DATA_DIR=/var/data
+   ```
+
+   (o la ruta real de tu disco).
+4. Guarda y haz **Manual Deploy → Clear build cache & deploy**.
+
+Si el disco está en `/var/data` pero sigue dando `EACCES`, es que el disco se
+creó antes de cambiar el usuario del servicio. La solución es **borrar el disco y
+volver a crearlo** (perderás lo que hubiera dentro; descarga antes un respaldo
+desde el panel de administración si aún puedes entrar).
+
+### Comprobar que quedó bien
+
+```bash
+curl -s https://TU-SERVICIO.onrender.com/api/health
+```
+
+Debe responder `"db":"ok"`. En los logs del arranque verás:
+
+```
+Base de datos: /var/data/remesaya.db
+```
+
+Si en su lugar ves `Base de datos: /opt/render/project/src/data/remesaya.db`, el
+disco no está montado donde crees: corrige el Mount Path.
+
+---
+
+## 10. Despliegue con Docker (alternativa a Render)
+
+Si prefieres no depender de Render, el repositorio incluye `Dockerfile`,
+`docker-compose.yml` y `.dockerignore`. La guía completa está en
+**[`DOCKER.md`](DOCKER.md)**; aquí va el resumen:
+
+```bash
+cd app
+cp .env.example .env      # edita las claves
+docker compose up -d --build
+```
+
+Eso levanta RemesaYa en `http://localhost:3000` con:
+
+- volumen con nombre `remesaya-data` montado en `/data` (la base **no** se
+  pierde al reiniciar ni al recrear el contenedor);
+- `restart: unless-stopped` (se levanta sola tras un reinicio del host);
+- `stop_grace_period: 20s` para que el checkpoint del WAL termine antes del
+  `SIGKILL`;
+- healthcheck contra `/api/health` cada 30 s;
+- usuario `node` sin privilegios y `tini` como PID 1.
+
+Comandos útiles:
+
+```bash
+docker compose logs -f                       # logs en vivo
+docker compose ps                            # estado + healthcheck
+docker exec remesaya node server/scripts/backup.js --list
+docker compose down                          # detener conservando datos
+```
+
+Ventaja frente a Render: **no hay plan Free que duerma el servicio** y el disco
+es tuyo. Desventaja: tienes que gestionar el servidor y el HTTPS (con Caddy, ver
+`DOCKER.md` §8).
+
+---
+
+## 11. Errores de Render al guardar variables: "Duplicate key"
+
+Si al pulsar **Save Changes** en *Environment* ves algo como:
+
+```
+Duplicate key 'SMARTFIELDS_API_KEY' is not allowed
+Duplicate key 'PSE_API_KEY' is not allowed
+```
+
+es porque hay **dos filas con la misma clave**. En tu caso una tenía el valor
+`CAMBIA` (un marcador de posición) y la otra el valor real. Render no guarda
+nada mientras exista el duplicado.
+
+**Solución:** en la lista de variables, borra la fila que tenga `CAMBIA` (el
+icono de papelera a la derecha) y deja solo la que tiene el valor real. Repite
+con cada clave duplicada y vuelve a pulsar **Save Changes**.
+
+Aprovecha para revisar que no quede ninguna variable con valor `CAMBIA`,
+`TU_VALOR_AQUI`, `xxx` o similar: la app arranca igual, pero el proveedor
+correspondiente fallará en modo `live`.
+
+---
+
+## 12. Checklist final antes de dar por bueno el deploy
+
+- [ ] El disco está montado en `/var/data` y `DATA_DIR=/var/data`.
+- [ ] No hay variables duplicadas ni valores `CAMBIA`.
+- [ ] `SESSION_SECRET`, `DATA_ENCRYPTION_KEY`, `BACKUP_ENCRYPTION_KEY` y
+      `DOC_PEPPER` tienen 64 caracteres hexadecimales cada una y están guardadas
+      en un gestor de secretos.
+- [ ] `APP_URL` es la URL real del servicio (con `https://`).
+- [ ] `TRUST_PROXY=true`.
+- [ ] `GET /api/health` devuelve `{"ok":true,"db":"ok"}`.
+- [ ] Puedes entrar al panel con el usuario administrador.
+- [ ] En **Ajustes → Respaldos cifrados** aparece al menos un `.db.enc` y el
+      botón de descarga funciona.
+- [ ] Has revocado el token `ghp_…` que se pegó en el chat.
