@@ -7,10 +7,14 @@ const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 
 const config = require('./config');
+const guardian = require('./services/guardian');
 const { cleanupSessions } = require('./auth');
 const publicRoutes = require('./routes/public');
 const adminRoutes = require('./routes/admin');
 const webhookRoutes = require('./routes/webhooks');
+
+// Contención de fallos: registrar en vez de morir.
+guardian.install();
 
 const app = express();
 app.disable('x-powered-by');
@@ -111,11 +115,24 @@ cleanupSessions();
 const cleanupTimer = setInterval(cleanupSessions, 30 * 60 * 1000);
 cleanupTimer.unref();
 
+// Mantiene el contenedor caliente (KEEPALIVE_MINUTES > 0).
+try {
+  guardian.keepAlive();
+} catch (err) {
+  console.error('[guardian] keep-alive no disponible:', err.message);
+}
+
 function shutdown(signal) {
   console.log(`\n${signal} recibido, cerrando servidor...`);
+  // Render envía SIGTERM al reiniciar: volcamos el WAL para no perder nada.
+  try {
+    guardian.shutdownDatabase(require('./db').db);
+  } catch (err) {
+    console.error('[guardian] no se pudo cerrar la base:', err.message);
+  }
   releaseLock();
   server.close(() => process.exit(0));
-  setTimeout(() => process.exit(0), 5000).unref();
+  setTimeout(() => process.exit(0), 8000).unref();
 }
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));

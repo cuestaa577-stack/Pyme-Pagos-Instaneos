@@ -217,7 +217,46 @@ node server/scripts/backup.js --restore remesaya-manual-20261126-174436.db.enc
 
 ---
 
-## 7. Notas de seguridad
+## 7. Resistencia a reinicios (que la app nunca se caiga)
+
+Render reinicia el contenedor por deploy, por OOM, por inactividad o por mantenimiento. RemesaYa está preparada para que eso **no** se traduzca en caída ni en pérdida de datos.
+
+**1. Preflight con auto-reparación.** `npm start` ejecuta `server/scripts/preflight.js` antes de levantar Express:
+
+| Situación al arrancar | Qué hace |
+|---|---|
+| Base íntegra | Arranca normal |
+| Bloqueo huérfano de un proceso muerto | Lo elimina |
+| Base corrupta | Restaura el respaldo cifrado más reciente que pase verificación |
+| Base corrupta y sin respaldos válidos | Aparta la base dañada como `.corrupt-<fecha>` y crea una nueva (servicio vivo, nunca caído) |
+
+**2. Durabilidad de cada transacción.** `PRAGMA synchronous = FULL` + `journal_mode = WAL`: cada commit se sincroniza a disco antes de confirmarse. Probado con `kill -9` (el peor caso, sin cierre limpio): **cero transacciones perdidas**.
+
+**3. Apagado limpio.** Con `exec node server/index.js` en el `startCommand`, la señal `SIGTERM` de Render llega directo a Node. Al recibirla:
+
+```
+SIGTERM recibido, cerrando servidor...
+[guardian] checkpoint WAL completado
+[guardian] base de datos cerrada limpiamente
+```
+
+Se hace `wal_checkpoint(TRUNCATE)` y se cierra la base. Render espera hasta `maxShutdownDelaySeconds: 15`.
+
+**4. Contención de fallos.** `server/services/guardian.js` captura `uncaughtException` y `unhandledRejection`, los registra en `<DATA_DIR>/guardian.log` y **sigue sirviendo** en vez de morir. Un error en una petición ya no tumba el proceso completo.
+
+**5. Health check real.** `GET /api/health` no solo dice "vivo": hace `SELECT 1` contra la base y responde **503** si algo está mal, para que Render reinicie limpio en vez de dejar un servicio zombie.
+
+```json
+{ "ok": true, "db": "ok", "uptime_seconds": 412, "degraded": false, "recoveries": 0 }
+```
+
+**6. Keep-alive.** `KEEPALIVE_MINUTES=10` hace un auto-ping a `/api/ping` cada 10 minutos.
+
+> ⚠️ **El plan Free de Render se duerme a los 15 min de inactividad.** Eso no es un bug de la app: es la política del plan. Para que esté siempre activa necesitas **Starter o superior**. Si te quedas en Free, configura un monitor externo gratuito (UptimeRobot o cron-job.org) apuntando a `https://TU-SERVICIO.onrender.com/api/ping` cada 5 minutos; eso la mantiene despierta la mayor parte del día.
+
+---
+
+## 8. Notas de seguridad
 
 - **Nunca** subas `.env` al repositorio. Ya está en `.gitignore`.
 - Rota cualquier token o llave que hayas pegado en un chat público (por ejemplo, un token `ghp_…` de GitHub): revócalo en <https://github.com/settings/tokens>.

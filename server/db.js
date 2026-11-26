@@ -8,7 +8,14 @@ const config = require('./config');
 fs.mkdirSync(config.dataDir, { recursive: true });
 const db = new Database(path.join(config.dataDir, config.dbFile));
 db.pragma('journal_mode = WAL');
+// FULL: cada commit se sincroniza a disco antes de confirmar. Cuesta algo de
+// rendimiento pero garantiza que un kill -9 o un reinicio de Render no pierda
+// una transacción ya confirmada al cliente.
+db.pragma('synchronous = FULL');
 db.pragma('foreign_keys = ON');
+// Si otro proceso tiene la base bloqueada un instante, esperamos en vez de fallar.
+db.pragma('busy_timeout = 5000');
+db.pragma('wal_autocheckpoint = 1000');
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS settings (

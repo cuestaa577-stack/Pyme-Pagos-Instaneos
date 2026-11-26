@@ -23,7 +23,12 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const config = require('../config');
-const { db } = require('../db');
+
+// Carga diferida: el preflight necesita descifrar/restaurar SIN abrir la base
+// (abrirla antes de repararla la bloquearía o la corrompería más).
+function getDb() {
+  return require('../db').db;
+}
 
 const BACKUP_DIR = path.join(config.dataDir, 'backups');
 const MAGIC = Buffer.from('RYBK', 'ascii');
@@ -183,7 +188,7 @@ function runBackup(label = 'auto') {
 
   try {
     // Copia consistente incluso con escrituras concurrentes.
-    db.exec(`VACUUM INTO '${plain.replace(/'/g, "''")}'`);
+    getDb().exec(`VACUUM INTO '${plain.replace(/'/g, "''")}'`);
     encryptFile(plain, encFile);
   } finally {
     shred(plain);

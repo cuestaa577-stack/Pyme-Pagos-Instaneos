@@ -1,0 +1,66 @@
+# Blueprint de Render para RemesaYa.
+# Úsalo con: Render Dashboard → New + → Blueprint → conecta el repo.
+# Crea el servicio, el disco persistente y las variables de una sola vez.
+services:
+  - type: web
+    name: remesaya
+    runtime: node
+    plan: starter # 'free' se duerme y no permite discos persistentes
+    region: oregon
+    rootDir: app
+    buildCommand: npm install
+    startCommand: npm start # ejecuta preflight (auto-reparación) y luego el servidor
+    healthCheckPath: /api/health
+    autoDeploy: true
+    # Render espera hasta 15 s tras SIGTERM antes de matar el proceso.
+    # El servidor hace checkpoint del WAL y cierra la base en ese lapso.
+    maxShutdownDelaySeconds: 15
+    disk:
+      name: remesaya-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /var/data
+      - key: DB_FILE
+        value: remesaya.db
+      - key: TRUST_PROXY
+        value: "true"
+      # Secretos: se generan solos y quedan guardados en Render.
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: DATA_ENCRYPTION_KEY
+        generateValue: true
+      - key: BACKUP_ENCRYPTION_KEY
+        generateValue: true
+      - key: DOC_PEPPER
+        generateValue: true
+      # Respaldos cifrados cada 6 h, se conservan 20.
+      - key: BACKUP_INTERVAL_HOURS
+        value: "6"
+      - key: BACKUP_KEEP
+        value: "20"
+      # Auto-ping cada 10 min para mantener el contenedor caliente.
+      - key: KEEPALIVE_MINUTES
+        value: "10"
+      - key: DEMO_FALLBACK
+        value: "true"
+      # Estas las defines tú en el panel (no se versionan):
+      - key: APP_URL
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: DLOCALGO_API_KEY
+        sync: false
+      - key: DLOCALGO_API_SECRET
+        sync: false
+      - key: DLOCALGO_WEBHOOK_SECRET
+        sync: false
+      - key: SMARTFIELDS_API_KEY
+        sync: false

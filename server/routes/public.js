@@ -26,8 +26,37 @@ const createLimiter = rateLimit({
   message: { error: 'Demasiadas solicitudes. Espera un momento.' },
 });
 
+// Ping ultraligero: no toca la base. Lo usa el keep-alive y los monitores
+// externos (UptimeRobot, cron-job.org) para no dejar dormir el contenedor.
+router.get('/ping', (req, res) => {
+  res.type('text/plain').send('pong');
+});
+
+// Health check de Render: además de "vivo", comprueba que la base responde.
 router.get('/health', (req, res) => {
-  res.json({ ok: true, app: config.appName, env: config.env, time: new Date().toISOString() });
+  const guardian = require('../services/guardian');
+  let dbOk = true;
+  let dbError = null;
+  try {
+    require('../db').db.prepare('SELECT 1').get();
+  } catch (err) {
+    dbOk = false;
+    dbError = err.message;
+  }
+  const snap = guardian.snapshot();
+  const ok = dbOk && !snap.degraded;
+  res.status(ok ? 200 : 503).json({
+    ok,
+    app: config.appName,
+    env: config.env,
+    time: new Date().toISOString(),
+    db: dbOk ? 'ok' : 'error',
+    ...(dbError ? { db_error: dbError } : {}),
+    uptime_seconds: snap.uptime_seconds,
+    degraded: snap.degraded,
+    recoveries: snap.recoveries,
+    last_checkpoint_at: snap.last_checkpoint_at,
+  });
 });
 
 router.get('/config', (req, res) => {
