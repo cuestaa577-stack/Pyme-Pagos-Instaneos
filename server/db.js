@@ -193,6 +193,23 @@ CREATE TABLE IF NOT EXISTS idempotency (
 );
 `);
 
+/**
+ * Migraciones ligeras: agrega columnas si no existen (SQLite no soporta
+ * ADD COLUMN IF NOT EXISTS).
+ */
+function ensureColumn(table, column, definition) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+// Momento en que los fondos del cobro quedan liquidados por el proveedor.
+ensureColumn('transactions', 'available_at', 'TEXT');
+// Días de liquidación aplicados al cobro (T+N).
+ensureColumn('transactions', 'settlement_days', 'INTEGER');
+// Marca de liberación contable (pending → available).
+ensureColumn('transactions', 'settled_at', 'TEXT');
+
 const DEFAULT_SETTINGS = {
   fees_percent: String(config.fees.percent),
   fee_fixed_cents: String(config.fees.fixedCents),
@@ -208,6 +225,26 @@ const DEFAULT_SETTINGS = {
   maintenance_mode: '0',
   min_withdrawal_cents: '500',
   auto_disburse: '1',
+  // Datos del comercio para cobros por Pago Móvil / transferencia en Venezuela.
+  ve_merchant_name: '',
+  ve_merchant_document: '',
+  ve_merchant_phone: '',
+  ve_merchant_bank: '',
+  ve_merchant_account: '',
+  // Interruptores de vías de pago (1 = activa, 0 = desactivada).
+  pay_card: '1',
+  pay_pse: '1',
+  pay_breb: '1',
+  pay_cash: '1',
+  pay_ve: '1',
+  // Días que el proveedor retiene los fondos antes de liquidarlos (T+N).
+  // El beneficiario cobra al instante igual: la entrega se financia con el
+  // float de liquidez del comercio y se reembolsa cuando llega la liquidación.
+  settlement_days_card: '7',
+  settlement_days_pse: '1',
+  settlement_days_breb: '0',
+  settlement_days_cash: '2',
+  settlement_days_ve: '0',
 };
 
 const insertSetting = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');

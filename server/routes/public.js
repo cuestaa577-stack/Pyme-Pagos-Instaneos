@@ -32,7 +32,19 @@ router.get('/config', (req, res) => {
   res.json({
     app_name: config.appName,
     currency: config.defaultCurrency,
-    methods: orders.METHODS,
+    methods: orders.METHODS.filter((m) => {
+      const sw = {
+        card: 'pay_card',
+        card_transparent: 'pay_card',
+        pse: 'pay_pse',
+        breb: 'pay_breb',
+        cash: 'pay_cash',
+        ve_pago_movil: 'pay_ve',
+        ve_transfer: 'pay_ve',
+        ve_cash: 'pay_ve',
+      }[m];
+      return !sw || s[sw] !== '0';
+    }),
     rails: orders.RAILS,
     fees: {
       percent: Number(s.fees_percent),
@@ -56,7 +68,7 @@ router.get('/config', (req, res) => {
       banks: vepay.BANKS,
       mode: vepay.mode(),
       live: vepay.isLive(),
-      merchant: vepay.merchantInfo(),
+      merchant: vepay.merchantInfo(s),
       currency: 'VES',
     },
     smartfields: { api_key: config.smartfields.apiKey, sdk_url: config.smartfields.sdkUrl },

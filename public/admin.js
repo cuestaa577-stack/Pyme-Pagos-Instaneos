@@ -116,15 +116,16 @@ function renderLogin() {
 
 /* ---------------- shell ---------------- */
 const TABS = [
-  ['resumen', 'Resumen', '📊'],
-  ['ordenes', 'Órdenes', '🧾'],
-  ['saldos', 'Saldos y ledger', '💰'],
-  ['retiros', 'Retiros', '🏦'],
-  ['payouts', 'Pagos a beneficiarios', '⚡'],
-  ['beneficiarios', 'Beneficiarios', '👥'],
-  ['ajustes', 'Ajustes', '⚙️'],
-  ['auditoria', 'Auditoría', '🛡️'],
-  ['webhooks', 'Webhooks', '🔔'],
+  ['resumen', 'Resumen', 'chart'],
+  ['ordenes', 'Órdenes', 'receipt'],
+  ['saldos', 'Saldos y ledger', 'wallet'],
+  ['retiros', 'Retiros', 'bank'],
+  ['payouts', 'Pagos a beneficiarios', 'bolt'],
+  ['beneficiarios', 'Beneficiarios', 'users'],
+  ['pagos', 'Configuración de pagos', 'card'],
+  ['ajustes', 'Ajustes', 'settings'],
+  ['auditoria', 'Auditoría', 'shield'],
+  ['webhooks', 'Webhooks', 'bell'],
 ];
 
 function shell(content) {
@@ -133,11 +134,11 @@ function shell(content) {
       <aside class="side">
         <div class="brand"><div class="logo">R</div><div><strong>RemesaYa</strong><span>Administración</span></div></div>
         <nav class="side-nav">
-          ${TABS.map(([id, label, ico]) => `<a href="#" data-tab="${id}" class="${A.tab === id ? 'active' : ''}"><span>${ico}</span>${label}</a>`).join('')}
+          ${TABS.map(([id, label, ico]) => `<a href="#" data-tab="${id}" class="${A.tab === id ? 'active' : ''}">${icon(ico, 18)}<span>${label}</span></a>`).join('')}
         </nav>
         <div class="side-foot">
           <div class="small muted">${esc(A.admin?.email || '')}</div>
-          <button class="btn btn-sm btn-ghost mt8" id="logout">Cerrar sesión</button>
+          <button class="btn btn-sm btn-ghost mt8" id="logout">${icon('logout', 15)} Cerrar sesión</button>
         </div>
       </aside>
       <main class="admin-main">
@@ -146,7 +147,7 @@ function shell(content) {
             <h1>${esc(TABS.find((t) => t[0] === A.tab)?.[1] || 'Resumen')}</h1>
             <p class="muted small">${new Date().toLocaleString('es-VE')}</p>
           </div>
-          <a class="btn btn-sm btn-ghost" href="/" target="_blank">Ver sitio ↗</a>
+          <a class="btn btn-sm btn-ghost" href="/" target="_blank">${icon('external', 15)} Ver sitio</a>
         </header>
         <div id="panel">${content}</div>
       </main>
@@ -182,6 +183,7 @@ async function renderTab() {
     else if (A.tab === 'retiros') await tabRetiros();
     else if (A.tab === 'payouts') await tabPayouts();
     else if (A.tab === 'beneficiarios') await tabBeneficiarios();
+    else if (A.tab === 'pagos') await tabPagos();
     else if (A.tab === 'ajustes') await tabAjustes();
     else if (A.tab === 'auditoria') await tabAuditoria();
     else if (A.tab === 'webhooks') await tabWebhooks();
@@ -465,6 +467,128 @@ async function tabBeneficiarios() {
     </div>`;
 }
 
+async function tabPagos() {
+  const [p, cfg] = await Promise.all([api('/providers'), api('/settings')]);
+  const s = cfg.settings || {};
+  const modeBadge = (live) =>
+    live
+      ? '<span class="st st-completed">En vivo</span>'
+      : '<span class="st st-pending">Demostración</span>';
+
+  const switchRow = (key, label, desc, on) => `
+    <div class="switch-row">
+      <div>
+        <strong>${label}</strong>
+        <div class="muted small">${desc}</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" data-switch="${key}" ${on ? 'checked' : ''} />
+        <span></span>
+      </label>
+    </div>`;
+
+  $('#panel').innerHTML = `
+    <div class="panel">
+      <div class="panel-head"><h3>Pasarelas conectadas</h3></div>
+      <div class="prov-grid">
+        <div class="prov">
+          <div class="prov-top"><strong>dLocal Go</strong>${modeBadge(p.dlocalgo.live)}</div>
+          <div class="muted small">Tarjeta alojada y tarjeta transparente (SmartFields).</div>
+          <div class="small mt8">SmartFields: ${p.dlocalgo.smartfields ? 'configurado' : 'sin llave'}</div>
+          ${p.dlocalgo.demo_fallback ? '<div class="small mt8" style="color:var(--warn)">Fallback demo activo</div>' : ''}
+        </div>
+        <div class="prov">
+          <div class="prov-top"><strong>BRE-B (Colombia)</strong>${modeBadge(p.breb.live)}</div>
+          <div class="muted small">Transferencias instantáneas con llave.</div>
+          <div class="small mt8">Llave comercio: ${esc(p.breb.merchant_key || '—')}</div>
+        </div>
+        <div class="prov">
+          <div class="prov-top"><strong>PSE (Colombia)</strong>${modeBadge(p.pse.live)}</div>
+          <div class="muted small">Débito bancario · ${p.pse.banks} bancos.</div>
+        </div>
+        <div class="prov">
+          <div class="prov-top"><strong>Venezuela (VES)</strong>${modeBadge(p.vepay.live)}</div>
+          <div class="muted small">Pago Móvil, transferencia y efectivo.</div>
+          <div class="small mt8">${Object.values(p.vepay.rails).join(' · ')}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel mt16">
+      <div class="panel-head"><h3>Vías de pago activas</h3></div>
+      <div class="switch-list">
+        ${switchRow('pay_card', 'Tarjeta', 'Cobros con tarjeta internacional (USD).', p.switches.card)}
+        ${switchRow('pay_pse', 'PSE', 'Débito desde bancos de Colombia (COP).', p.switches.pse)}
+        ${switchRow('pay_breb', 'BRE-B', 'Transferencia instantánea en Colombia (COP).', p.switches.breb)}
+        ${switchRow('pay_cash', 'Efectivo', 'Pago en corresponsales (USD).', p.switches.cash)}
+        ${switchRow('pay_ve', 'Pago Móvil / Venezuela', 'Cobros en bolívares desde Venezuela (VES).', p.switches.ve)}
+      </div>
+      <button class="btn btn-primary mt16" id="sw-go">Guardar vías de pago</button>
+    </div>
+
+    <div class="panel mt16">
+      <div class="panel-head"><h3>Datos de recaudo en Venezuela</h3></div>
+      <p class="muted small">Estos datos se muestran al pagador cuando cobras por Pago Móvil o transferencia en bolívares.</p>
+      <div class="grid2 mt16">
+        <label class="field"><span>Nombre / razón social</span><input class="input" data-set="ve_merchant_name" value="${esc(s.ve_merchant_name || p.vepay.merchant.name || '')}" /></label>
+        <label class="field"><span>Cédula o RIF</span><input class="input" data-set="ve_merchant_document" value="${esc(s.ve_merchant_document || p.vepay.merchant.document || '')}" /></label>
+        <label class="field"><span>Teléfono Pago Móvil</span><input class="input" data-set="ve_merchant_phone" value="${esc(s.ve_merchant_phone || p.vepay.merchant.phone || '')}" placeholder="04141234567" /></label>
+        <label class="field"><span>Banco</span>
+          <select class="input" data-set="ve_merchant_bank">
+            <option value="">Selecciona…</option>
+            ${Object.entries(p.vepay.banks).map(([code, name]) => `<option value="${code}" ${String(s.ve_merchant_bank || p.vepay.merchant.bank) === code ? 'selected' : ''}>${code} · ${esc(name)}</option>`).join('')}
+          </select>
+        </label>
+        <label class="field"><span>Número de cuenta</span><input class="input" data-set="ve_merchant_account" value="${esc(s.ve_merchant_account || p.vepay.merchant.account || '')}" placeholder="01340000000000000000" /></label>
+      </div>
+      <button class="btn btn-primary mt16" id="ve-go">Guardar datos de recaudo</button>
+    </div>
+
+    <div class="panel mt16">
+      <div class="panel-head"><h3>Llaves y secretos</h3></div>
+      <p class="muted small">Por seguridad, las claves de las pasarelas (dLocal Go, BRE-B, PSE y Venezuela) se configuran en el archivo <code>.env</code> del servidor y nunca se muestran en el navegador. Al cambiarlas y reiniciar, las pasarelas pasan a modo «En vivo» automáticamente.</p>
+      <div class="tbl-wrap mt16">
+        <table class="tbl">
+          <thead><tr><th>Pasarela</th><th>Variables en .env</th></tr></thead>
+          <tbody>
+            <tr><td>dLocal Go</td><td class="mono small">DLOCALGO_API_KEY · DLOCALGO_API_SECRET · SMARTFIELDS_API_KEY</td></tr>
+            <tr><td>BRE-B</td><td class="mono small">BREB_MODE · BREB_API_URL · BREB_API_KEY</td></tr>
+            <tr><td>PSE</td><td class="mono small">PSE_MODE · PSE_API_URL · PSE_API_KEY</td></tr>
+            <tr><td>Venezuela</td><td class="mono small">VE_MODE · VE_API_URL · VE_API_KEY</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+
+  $('#sw-go').addEventListener('click', async () => {
+    const body = {};
+    document.querySelectorAll('[data-switch]').forEach((el) => {
+      body[el.dataset.switch] = el.checked ? '1' : '0';
+    });
+    try {
+      await api('/settings', { method: 'PUT', body: JSON.stringify(body) });
+      toast('Vías de pago actualizadas.', 'ok');
+      renderTab();
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  });
+
+  $('#ve-go').addEventListener('click', async () => {
+    const body = {};
+    document.querySelectorAll('[data-set]').forEach((el) => {
+      body[el.dataset.set] = el.value;
+    });
+    try {
+      await api('/settings', { method: 'PUT', body: JSON.stringify(body) });
+      toast('Datos de recaudo guardados.', 'ok');
+      renderTab();
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  });
+}
+
 async function tabAjustes() {
   const { settings } = await api('/settings');
   A.settings = settings;
@@ -538,7 +662,7 @@ async function tabWebhooks() {
         <table class="tbl">
           <thead><tr><th>#</th><th>Fuente</th><th>Evento</th><th>Firma</th><th>Estado</th><th>Fecha</th></tr></thead>
           <tbody>
-            ${data.items.map((w) => `<tr><td>${w.id}</td><td>${esc(w.source)}</td><td class="mono">${esc(w.event_id)}</td><td>${w.signature_valid ? '✓' : '✗'}</td><td>${badge(w.status)}</td><td class="muted small">${esc(w.created_at)}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Sin webhooks.</td></tr>'}
+            ${data.items.map((w) => `<tr><td>${w.id}</td><td>${esc(w.source)}</td><td class="mono">${esc(w.event_id)}</td><td>${w.signature_valid ? icon('check', 15) : icon('close', 15)}</td><td>${badge(w.status)}</td><td class="muted small">${esc(w.created_at)}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Sin webhooks.</td></tr>'}
           </tbody>
         </table>
       </div>

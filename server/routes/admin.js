@@ -9,6 +9,10 @@ const withdrawals = require('../services/withdrawals');
 const payouts = require('../services/payouts');
 const ledger = require('../services/ledger');
 const pricing = require('../services/pricing');
+const config = require('../config');
+const breb = require('../providers/breb');
+const pse = require('../providers/pse');
+const vepay = require('../providers/vepay');
 const {
   loginSchema,
   withdrawalSchema,
@@ -219,7 +223,50 @@ const EDITABLE_SETTINGS = new Set([
   'maintenance_mode',
   'auto_disburse',
   'breb_merchant_key',
+  've_merchant_name',
+  've_merchant_document',
+  've_merchant_phone',
+  've_merchant_bank',
+  've_merchant_account',
+  'pay_card',
+  'pay_pse',
+  'pay_breb',
+  'pay_cash',
+  'pay_ve',
 ]);
+
+/**
+ * Estado de las pasarelas y datos públicos del comercio (sin secretos).
+ * Permite al propietario ver, desde el panel, qué vías están en vivo y cuáles
+ * en modo demostración, y editar los datos de recaudo en Venezuela.
+ */
+router.get('/providers', (req, res) => {
+  const s = getSettings();
+  res.json({
+    dlocalgo: {
+      mode: config.dlocalgo.apiKey ? 'live' : 'demo',
+      live: Boolean(config.dlocalgo.apiKey) && !config.demoFallback,
+      demo_fallback: config.demoFallback,
+      smartfields: Boolean(config.smartfields.apiKey),
+    },
+    breb: { mode: breb.mode(), live: breb.isLive(), merchant_key: s.breb_merchant_key },
+    pse: { mode: pse.mode(), live: pse.isLive(), banks: pse.BANKS.length },
+    vepay: {
+      mode: vepay.mode(),
+      live: vepay.isLive(),
+      merchant: vepay.merchantInfo(s),
+      banks: vepay.BANKS,
+      rails: vepay.RAILS,
+    },
+    switches: {
+      card: s.pay_card !== '0',
+      pse: s.pay_pse !== '0',
+      breb: s.pay_breb !== '0',
+      cash: s.pay_cash !== '0',
+      ve: s.pay_ve !== '0',
+    },
+  });
+});
 
 router.get('/settings', (req, res) => {
   res.json({ settings: getSettings() });

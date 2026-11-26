@@ -181,6 +181,22 @@ async function createOrder(input, { ip } = {}) {
   if (input.method === 'pse' && payerCountry !== 'CO') {
     throw badRequest('PSE solo está disponible para pagos desde Colombia.');
   }
+  // Respeta los interruptores de vías de pago configurados por el propietario.
+  const settings = getSettings();
+  const methodSwitch = {
+    card: 'pay_card',
+    card_transparent: 'pay_card',
+    pse: 'pay_pse',
+    breb: 'pay_breb',
+    cash: 'pay_cash',
+    ve_pago_movil: 'pay_ve',
+    ve_transfer: 'pay_ve',
+    ve_cash: 'pay_ve',
+  }[input.method];
+  if (methodSwitch && settings[methodSwitch] === '0') {
+    throw badRequest('Esta vía de pago está desactivada temporalmente.');
+  }
+
   const isVeMethod = VE_METHODS.includes(input.method);
   if (isVeMethod) {
     if (currency !== 'VES') throw badRequest('Los pagos desde Venezuela se procesan en bolívares (VES).');

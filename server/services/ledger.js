@@ -9,6 +9,11 @@ const ACCOUNTS = {
   PAYOUTS_OUT: 'payouts_out',
   WITHDRAWALS_OUT: 'withdrawals_out',
   CUSTOMER_FLOAT: 'customer_float',
+  // Capital propio aportado por el comercio para adelantar entregas mientras
+  // el proveedor liquida (T+N). Permite pagos instantáneos reales.
+  LIQUIDITY_FLOAT: 'liquidity_float',
+  // Contrapartida del capital aportado / devuelto.
+  OWNER_EQUITY: 'owner_equity',
 };
 
 /**
@@ -104,8 +109,11 @@ function hasSettlementEntries(transactionId) {
   );
 }
 
-function settleCollection({ transactionId, grossCents, feeCents, netCents, currency, description }) {
+function settleCollection({ transactionId, grossCents, feeCents, netCents, currency, description, pending = false }) {
   if (hasSettlementEntries(transactionId)) return false;
+  // Si el proveedor retiene los fondos (T+N), el neto entra como pendiente y
+  // se libera a disponible cuando llega la liquidación.
+  const netAccount = pending ? ACCOUNTS.MERCHANT_PENDING : ACCOUNTS.MERCHANT_AVAILABLE;
   post([
     {
       transaction_id: transactionId,
@@ -117,11 +125,11 @@ function settleCollection({ transactionId, grossCents, feeCents, netCents, curre
     },
     {
       transaction_id: transactionId,
-      account: ACCOUNTS.MERCHANT_AVAILABLE,
+      account: netAccount,
       direction: 'credit',
       amount_cents: netCents,
       currency,
-      description: description || 'Saldo disponible por cobro',
+      description: description || (pending ? 'Saldo pendiente de liquidación' : 'Saldo disponible por cobro'),
     },
     {
       transaction_id: transactionId,
@@ -133,6 +141,88 @@ function settleCollection({ transactionId, grossCents, feeCents, netCents, curre
     },
   ]);
   return true;
+}
+
+/**
+ * Libera a disponible el neto de un cobro que estaba pendiente de liquidación.
+ * Idempotente: usa settled_at en la transacción.
+ */
+function releasePending(transactionId) {
+  const t = db.prepare('SELECT * FROM transactions WHERE id = ?').get(transactionId);
+  if (!t || t.settled_at) return false;
+  post([
+    {
+      transaction_id: transactionId,
+      account: ACCOUNTS.MERCHANT_PENDING,
+      direction: 'debit',
+      amount_cents: t.net_cents,
+      currency: t.currency,
+      description: `Liquidación recibida ${t.public_id}`,
+    },
+    {
+      transaction_id: transactionId,
+      account: ACCOUNTS.MERCHANT_AVAILABLE,
+      direction: 'credit',
+      amount_cents: t.net_cents,
+      currency: t.currency,
+      description: `Saldo disponible ${t.public_id}`,
+    },
+  ]);
+  db.prepare("UPDATE transactions SET settled_at = datetime('now'), updated_at = datetime('now') WHERE id = ?").run(
+    transactionId
+  );
+  return true;
+}
+
+/** Aporta capital propio (float) para poder entregar de inmediato. */
+function fundLiquidity({ amountCents, currency, description }) {
+  if (!Number.isInteger(amountCents) || amountCents <= 0) throw new Error('Monto inválido.');
+  post([
+    {
+      account: ACCOUNTS.OWNER_EQUITY,
+      direction: 'debit',
+      amount_cents: amountCents,
+      currency,
+      description: description || 'Aporte de liquidez del propietario',
+    },
+    {
+      account: ACCOUNTS.LIQUIDITY_FLOAT,
+      direction: 'credit',
+      amount_cents: amountCents,
+      currency,
+      description: description || 'Float de liquidez disponible',
+    },
+  ]);
+  return { amount_cents: amountCents, currency };
+}
+
+/** Retira capital propio sobrante del float (no puede dejar saldo negativo). */
+function withdrawLiquidity({ amountCents, currency, description }) {
+  if (!Number.isInteger(amountCents) || amountCents <= 0) throw new Error('Monto inválido.');
+  const available = balance(ACCOUNTS.LIQUIDITY_FLOAT, currency);
+  if (amountCents > available) throw new Error('El monto supera el float disponible.');
+  post([
+    {
+      account: ACCOUNTS.LIQUIDITY_FLOAT,
+      direction: 'debit',
+      amount_cents: amountCents,
+      currency,
+      description: description || 'Devolución de liquidez al propietario',
+    },
+    {
+      account: ACCOUNTS.OWNER_EQUITY,
+      direction: 'credit',
+      amount_cents: amountCents,
+      currency,
+      description: description || 'Devolución de liquidez al propietario',
+    },
+  ]);
+  return { amount_cents: amountCents, currency };
+}
+
+/** Capacidad total para entregar al instante = disponible + float. */
+function deliveryCapacity(currency) {
+  return balance(ACCOUNTS.MERCHANT_AVAILABLE, currency) + balance(ACCOUNTS.LIQUIDITY_FLOAT, currency);
 }
 
 function refundCollection({ transactionId, amountCents, currency, description }) {
@@ -224,6 +314,10 @@ module.exports = {
   hasSettlementEntries,
   sweepFees,
   settleCollection,
+  releasePending,
+  fundLiquidity,
+  withdrawLiquidity,
+  deliveryCapacity,
   refundCollection,
   debitWithdrawal,
   debitPayout,

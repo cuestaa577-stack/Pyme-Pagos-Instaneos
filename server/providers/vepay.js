@@ -130,13 +130,14 @@ async function call(path, body) {
   }
 }
 
-function merchantInfo() {
+function merchantInfo(settings = null) {
+  const s = settings || {};
   return {
-    name: config.vepay?.merchantName || config.appName,
-    document: config.vepay?.merchantDocument || '',
-    phone: config.vepay?.merchantPhone || '',
-    bank: config.vepay?.merchantBank || '',
-    account: config.vepay?.merchantAccount || '',
+    name: s.ve_merchant_name || config.vepay?.merchantName || config.appName,
+    document: s.ve_merchant_document || config.vepay?.merchantDocument || '',
+    phone: s.ve_merchant_phone || config.vepay?.merchantPhone || '',
+    bank: s.ve_merchant_bank || config.vepay?.merchantBank || '',
+    account: s.ve_merchant_account || config.vepay?.merchantAccount || '',
   };
 }
 

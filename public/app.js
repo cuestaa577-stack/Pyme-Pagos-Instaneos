@@ -52,34 +52,39 @@ const VE_BANKS = [
 ];
 
 const COUNTRIES = [
-  { code: 'VE', name: 'Venezuela', flag: '🇻🇪' },
-  { code: 'CO', name: 'Colombia', flag: '🇨🇴' },
-  { code: 'PE', name: 'Perú', flag: '🇵🇪' },
-  { code: 'CL', name: 'Chile', flag: '🇨🇱' },
-  { code: 'AR', name: 'Argentina', flag: '🇦🇷' },
-  { code: 'MX', name: 'México', flag: '🇲🇽' },
-  { code: 'EC', name: 'Ecuador', flag: '🇪🇨' },
-  { code: 'PA', name: 'Panamá', flag: '🇵🇦' },
-  { code: 'DO', name: 'Rep. Dominicana', flag: '🇩🇴' },
-  { code: 'ES', name: 'España', flag: '🇪🇸' },
-  { code: 'US', name: 'Estados Unidos', flag: '🇺🇸' },
+  { code: 'VE', name: 'Venezuela' },
+  { code: 'CO', name: 'Colombia' },
+  { code: 'PE', name: 'Perú' },
+  { code: 'CL', name: 'Chile' },
+  { code: 'AR', name: 'Argentina' },
+  { code: 'MX', name: 'México' },
+  { code: 'EC', name: 'Ecuador' },
+  { code: 'PA', name: 'Panamá' },
+  { code: 'DO', name: 'Rep. Dominicana' },
+  { code: 'ES', name: 'España' },
+  { code: 'US', name: 'Estados Unidos' },
 ];
 
 const PAYER_COUNTRIES = [
-  { code: 'US', name: 'Estados Unidos / Otro', flag: '🌎', currency: 'USD' },
-  { code: 'CO', name: 'Colombia', flag: '🇨🇴', currency: 'COP' },
-  { code: 'VE', name: 'Venezuela', flag: '🇻🇪', currency: 'VES' },
+  { code: 'US', name: 'Estados Unidos / Otro', currency: 'USD' },
+  { code: 'CO', name: 'Colombia', currency: 'COP' },
+  { code: 'VE', name: 'Venezuela', currency: 'VES' },
 ];
 
+// Chip de país sobrio (código ISO) en lugar de emoji de bandera.
+function countryChip(code) {
+  return `<span class="cc">${code}</span>`;
+}
+
 const METHOD_CATALOG = {
-  card: { ico: '💳', name: 'Tarjeta', sub: 'Visa / Mastercard · 3D Secure' },
-  card_transparent: { ico: '⚡', name: 'Tarjeta transparente', sub: 'Checkout en la página' },
-  pse: { ico: '🏦', name: 'PSE', sub: 'Débito bancario Colombia' },
-  breb: { ico: '🔑', name: 'BRE-B', sub: 'Transferencia instantánea' },
-  cash: { ico: '💵', name: 'Efectivo', sub: 'Cupón de pago' },
-  ve_pago_movil: { ico: '📱', name: 'Pago Móvil', sub: 'Débito inmediato en bolívares' },
-  ve_transfer: { ico: '🏦', name: 'Transferencia', sub: 'Banco venezolano en VES' },
-  ve_cash: { ico: '💵', name: 'Efectivo', sub: 'Taquilla / agente en Venezuela' },
+  card: { ico: 'card', name: 'Tarjeta', sub: 'Visa / Mastercard · 3D Secure' },
+  card_transparent: { ico: 'spark', name: 'Tarjeta transparente', sub: 'Checkout en la página' },
+  pse: { ico: 'bank', name: 'PSE', sub: 'Débito bancario Colombia' },
+  breb: { ico: 'key', name: 'BRE-B', sub: 'Transferencia instantánea' },
+  cash: { ico: 'cash', name: 'Efectivo', sub: 'Cupón de pago' },
+  ve_pago_movil: { ico: 'phone', name: 'Pago Móvil', sub: 'Débito inmediato en bolívares' },
+  ve_transfer: { ico: 'transfer', name: 'Transferencia', sub: 'Banco venezolano en VES' },
+  ve_cash: { ico: 'cash', name: 'Efectivo', sub: 'Taquilla / agente en Venezuela' },
 };
 
 function payerCurrency(payerCountry) {
@@ -181,10 +186,13 @@ function nav() {
         <a href="/#como-funciona" data-anchor>Cómo funciona</a>
         <a href="/#vias" data-anchor>Vías de pago</a>
         <a href="/#tarifas" data-anchor>Tarifas</a>
-        <a href="/admin" data-link>Administración</a>
+        <a class="nav-login" href="/admin" data-link>${icon('lock', 16)} Iniciar sesión</a>
         <a class="btn btn-primary btn-sm" href="/enviar" data-link>Enviar dinero</a>
       </div>
-      <a class="btn btn-primary btn-sm" href="/enviar" data-link style="display:none" id="nav-cta-mobile">Enviar</a>
+      <div class="nav-mobile-actions">
+        <a class="nav-login" href="/admin" data-link>${icon('lock', 16)} Entrar</a>
+        <a class="btn btn-primary btn-sm" href="/enviar" data-link>Enviar</a>
+      </div>
     </div>
   </div>`;
 }
@@ -238,45 +246,58 @@ function landingView() {
   const rates = c.rates || {};
   return `
   ${nav()}
-  <div class="wrap">
-    <section class="hero">
-      <div>
+  <section class="hero">
+    <div class="hero-media" aria-hidden="true"></div>
+    <div class="hero-veil" aria-hidden="true"></div>
+    <div class="wrap hero-inner">
+      <div class="hero-copy">
         <div class="pill"><span class="dot"></span> Entrega instantánea 24/7</div>
         <h1 class="mt16">Envía dinero a Venezuela <span class="grad">en segundos</span>, no en días.</h1>
         <p class="lead">RemesaYa conecta a los venezolanos en el extranjero con su familia: pagas con tarjeta, PSE, BRE-B o efectivo, y tu beneficiario recibe al instante en Pago Móvil o transferencia, validando siempre su cédula venezolana.</p>
         <div class="hero-badges">
-          <span class="pill">🇻🇪 Cédula venezolana</span>
-          <span class="pill">⚡ BRE-B instantáneo</span>
-          <span class="pill">🏦 PSE Colombia</span>
-          <span class="pill">🔒 Datos cifrados</span>
+          <span class="pill">${icon('id', 15)} Cédula venezolana</span>
+          <span class="pill">${icon('bolt', 15)} BRE-B instantáneo</span>
+          <span class="pill">${icon('bank', 15)} PSE Colombia</span>
+          <span class="pill">${icon('lock', 15)} Datos cifrados</span>
         </div>
         <div class="hero-stats">
           <div><strong>${rates.usd_ves ? rates.usd_ves.toFixed(2) : '—'}</strong><span>Bs por USD</span></div>
           <div><strong>${fees.percent ?? 3.5}%</strong><span>Comisión</span></div>
-          <div><strong>&lt; 1 min</strong><span>Entrega promedio</span></div>
+          <div><strong>< 1 min</strong><span>Entrega promedio</span></div>
         </div>
       </div>
-      <div class="card" id="calc">
-        <div class="card-title">Calcula tu envío</div>
-        <div class="card-sub">Sin sorpresas: ves la comisión y el monto exacto que recibe tu familia.</div>
-        <label class="field">
-          <span>Monto a enviar</span>
-          <div class="amount-input">
-            <input class="input" id="calc-amount" type="number" min="5" step="1" value="100" />
-            <span class="cur" id="calc-cur">USD</span>
+    </div>
+    <div class="flag-ribbon" aria-hidden="true"><i></i><i></i><i></i></div>
+  </section>
+
+  <div class="wrap">
+    <section class="calc-section">
+      <div class="card calc-card" id="calc">
+        <div class="calc-head">
+          <div>
+            <div class="card-title">Calcula tu envío</div>
+            <div class="card-sub">Sin sorpresas: ves la comisión y el monto exacto que recibe tu familia.</div>
           </div>
-        </label>
-        <label class="field">
-          <span>Pagas desde</span>
-          <select class="input" id="calc-payer">
-            ${PAYER_COUNTRIES.map((x) => `<option value="${x.code}">${x.flag} ${x.name}</option>`).join('')}
-          </select>
-        </label>
-        <div class="row2">
+          <span class="pill">${icon('bolt', 14)} Instantáneo</span>
+        </div>
+        <div class="calc-grid">
+          <label class="field">
+            <span>Monto a enviar</span>
+            <div class="amount-input">
+              <input class="input" id="calc-amount" type="number" min="5" step="1" value="100" />
+              <span class="cur" id="calc-cur">USD</span>
+            </div>
+          </label>
+          <label class="field">
+            <span>Pagas desde</span>
+            <select class="input" id="calc-payer">
+              ${PAYER_COUNTRIES.map((x) => `<option value="${x.code}">${x.name}</option>`).join('')}
+            </select>
+          </label>
           <label class="field">
             <span>Destino</span>
             <select class="input" id="calc-country">
-              ${COUNTRIES.map((x) => `<option value="${x.code}" ${x.code === 'VE' ? 'selected' : ''}>${x.flag} ${x.name}</option>`).join('')}
+              ${COUNTRIES.map((x) => `<option value="${x.code}" ${x.code === 'VE' ? 'selected' : ''}>${x.name}</option>`).join('')}
             </select>
           </label>
           <label class="field">
@@ -326,9 +347,9 @@ function landingView() {
         </div>
       </div>
       <div class="grid3 mt24">
-        <div class="feature"><div class="ico">💳</div><h4>Tarjeta internacional</h4><p>Visa y Mastercard con 3D Secure. Checkout alojado o transparente con SmartFields.</p></div>
-        <div class="feature"><div class="ico">💵</div><h4>Efectivo</h4><p>Paga en efectivo con cupón y completa la operación sin cuenta bancaria.</p></div>
-        <div class="feature"><div class="ico">🔁</div><h4>Cobros recurrentes</h4><p>Guarda la tarjeta con token seguro para tus suscripciones o pagos mensuales.</p></div>
+        <div class="feature"><div class="ico">${icon('card', 22)}</div><h4>Tarjeta internacional</h4><p>Visa y Mastercard con 3D Secure. Checkout alojado o transparente con SmartFields.</p></div>
+        <div class="feature"><div class="ico">${icon('cash', 22)}</div><h4>Efectivo</h4><p>Paga en efectivo con cupón y completa la operación sin cuenta bancaria.</p></div>
+        <div class="feature"><div class="ico">${icon('refresh', 22)}</div><h4>Cobros recurrentes</h4><p>Guarda la tarjeta con token seguro para tus suscripciones o pagos mensuales.</p></div>
       </div>
     </div>
   </section>
@@ -340,10 +361,10 @@ function landingView() {
         <p>Sin cargos escondidos. Lo que ves es lo que pagas.</p>
       </div>
       <div class="grid4">
-        <div class="feature"><div class="ico">📊</div><h4>${fees.percent ?? 3.5}% + ${money(fees.fixed_cents ?? 50, 'USD')}</h4><p>Comisión por envío. Se muestra antes de pagar.</p></div>
-        <div class="feature"><div class="ico">🏦</div><h4>${fees.withdrawal_fee_percent ?? 1}%</h4><p>Retiro del saldo de la plataforma vía BRE-B.</p></div>
-        <div class="feature"><div class="ico">⚡</div><h4>Entrega inmediata</h4><p>Sin costo adicional por velocidad.</p></div>
-        <div class="feature"><div class="ico">🛡️</div><h4>Datos cifrados</h4><p>Cédulas y cuentas protegidas con AES-256-GCM.</p></div>
+        <div class="feature"><div class="ico">${icon('chart', 22)}</div><h4>${fees.percent ?? 3.5}% + ${money(fees.fixed_cents ?? 50, 'USD')}</h4><p>Comisión por envío. Se muestra antes de pagar.</p></div>
+        <div class="feature"><div class="ico">${icon('bank', 22)}</div><h4>${fees.withdrawal_fee_percent ?? 1}%</h4><p>Retiro del saldo de la plataforma vía BRE-B.</p></div>
+        <div class="feature"><div class="ico">${icon('bolt', 22)}</div><h4>Entrega inmediata</h4><p>Sin costo adicional por velocidad.</p></div>
+        <div class="feature"><div class="ico">${icon('shield', 22)}</div><h4>Datos cifrados</h4><p>Cédulas y cuentas protegidas con AES-256-GCM.</p></div>
       </div>
     </div>
   </section>
@@ -365,7 +386,7 @@ function wizardView() {
       <label class="field">
         <span>Pagas desde</span>
         <select class="input" id="w-payer">
-          ${PAYER_COUNTRIES.map((x) => `<option value="${x.code}" ${x.code === d.payerCountry ? 'selected' : ''}>${x.flag} ${x.name}</option>`).join('')}
+          ${PAYER_COUNTRIES.map((x) => `<option value="${x.code}" ${x.code === d.payerCountry ? 'selected' : ''}>${x.name}</option>`).join('')}
         </select>
       </label>
       <label class="field">
@@ -379,7 +400,7 @@ function wizardView() {
       <label class="field">
         <span>País de destino</span>
         <select class="input" id="w-country" ${d.payerCountry === 'VE' ? 'disabled' : ''}>
-          ${COUNTRIES.map((x) => `<option value="${x.code}" ${x.code === d.country ? 'selected' : ''}>${x.flag} ${x.name}</option>`).join('')}
+          ${COUNTRIES.map((x) => `<option value="${x.code}" ${x.code === d.country ? 'selected' : ''}>${x.name}</option>`).join('')}
         </select>
         ${d.payerCountry === 'VE' ? '<div class="hint">Los pagos desde Venezuela se entregan dentro de Venezuela.</div>' : ''}
       </label>
@@ -415,12 +436,12 @@ function wizardView() {
     const isVeRail = ['pago_movil_ve', 'transfer_ve', 'cash_ve'].includes(d.rail);
     const banks = d.country === 'VE' || d.payerCountry === 'VE' ? VE_BANKS : (state.config?.pse?.banks || []);
     const railIcons = {
-      pago_movil: '📱',
-      breb: '⚡',
-      bank: '🏦',
-      pago_movil_ve: '📱',
-      transfer_ve: '🏦',
-      cash_ve: '💵',
+      pago_movil: 'phone',
+      breb: 'bolt',
+      bank: 'bank',
+      pago_movil_ve: 'phone',
+      transfer_ve: 'bank',
+      cash_ve: 'cash',
     };
     const railSubs = {
       pago_movil: 'Instantáneo a su banco',
@@ -443,7 +464,7 @@ function wizardView() {
       <label class="field">
         <span>Vía de entrega</span>
         <div class="choice-grid">
-          ${rails.map((r) => `<div class="choice ${d.rail === r ? 'sel' : ''}" data-rail="${r}"><div class="ci">${railIcons[r]}</div><div><strong>${railLabel(r)}</strong><span>${railSubs[r]}</span></div></div>`).join('')}
+          ${rails.map((r) => `<div class="choice ${d.rail === r ? 'sel' : ''}" data-rail="${r}"><div class="ci">${icon(railIcons[r], 20)}</div><div><strong>${railLabel(r)}</strong><span>${railSubs[r]}</span></div></div>`).join('')}
         </div>
       </label>
       ${d.rail === 'breb' ? `
@@ -505,7 +526,7 @@ function wizardView() {
       <label class="field">
         <span>¿Cómo deseas pagar?</span>
         <div class="choice-grid">
-          ${methods.map((m) => `<div class="choice ${d.method === m.id ? 'sel' : ''}" data-method="${m.id}"><div class="ci">${m.ico}</div><div><strong>${m.name}</strong><span>${m.sub}</span></div></div>`).join('')}
+          ${methods.map((m) => `<div class="choice ${d.method === m.id ? 'sel' : ''}" data-method="${m.id}"><div class="ci">${icon(m.ico, 20)}</div><div><strong>${m.name}</strong><span>${m.sub}</span></div></div>`).join('')}
         </div>
       </label>
       <label class="field">
@@ -596,7 +617,7 @@ function bindWizard() {
           const r = await api('/validate-document', { method: 'POST', body: JSON.stringify({ document: docEl.value }) });
           docEl.classList.toggle('err', !r.valid);
           hint.className = `hint ${r.valid ? 'ok' : 'error'}`;
-          hint.textContent = r.valid ? `✓ Cédula válida (${r.type}) · ${r.masked}` : r.error;
+          hint.textContent = r.valid ? `Cédula válida (${r.type}) · ${r.masked}` : r.error;
         } catch {
           /* silencioso */
         }
@@ -617,7 +638,7 @@ function bindWizard() {
           const r = await api('/validate-document', { method: 'POST', body: JSON.stringify({ document: bdocEl.value }) });
           bdocEl.classList.toggle('err', !r.valid);
           hint.className = `hint ${r.valid ? 'ok' : 'error'}`;
-          hint.textContent = r.valid ? `✓ Cédula válida · ${r.masked}` : r.error;
+          hint.textContent = r.valid ? `Cédula válida · ${r.masked}` : r.error;
         } catch {
           /* silencioso */
         }
@@ -880,7 +901,7 @@ async function checkoutView(publicId) {
         <div class="card-title">Pago con tarjeta</div>
         <div class="card-sub">Serás dirigido al checkout seguro de dLocal Go para completar el pago con 3D Secure.</div>
         <div style="text-align:center;padding:16px 0">
-          <div style="font-size:2.4rem">💳</div>
+          <div class="pay-ico">${icon('card', 40)}</div>
         </div>
         <button class="btn btn-primary btn-block" id="hosted-pay">Pagar ${order.amount_formatted}</button>
         <div class="hint mt8">Acepta Visa, Mastercard y American Express.</div>
@@ -1011,7 +1032,7 @@ async function successView(publicId) {
   <div class="wrap">
     <div class="checkout">
       <div class="card" style="text-align:center">
-        <div style="font-size:3.4rem;line-height:1">${ok ? '✅' : bad ? '⚠️' : '⏳'}</div>
+        <div style="font-size:3.4rem;line-height:1">${ok ? icon('checkCircle', 54) : bad ? icon('alert', 54) : icon('clock', 54)}</div>
         <h2 class="mt16">${ok ? '¡Envío exitoso!' : bad ? 'El pago no se completó' : 'Procesando tu pago'}</h2>
         <p class="muted mt8">${ok ? 'Tu beneficiario ya puede disponer del dinero.' : bad ? 'No se realizó ningún cargo. Puedes intentarlo de nuevo.' : 'Estamos confirmando la operación con el proveedor.'}</p>
         <div class="mt24" style="font-size:2rem;font-weight:800">${order.destination_amount_formatted}</div>
@@ -1025,7 +1046,7 @@ async function successView(publicId) {
           <div class="sr"><span>Tasa aplicada</span><strong>1 ${esc(order.currency)} = ${order.fx_rate} ${esc(order.destination_currency)}</strong></div>
         </div>
         <div class="timeline mt24" style="text-align:left">
-          ${timeline.map((x) => `<div class="tl-item"><div class="tl-dot ${x.done ? 'done' : ''}">${x.done ? '✓' : '•'}</div><div class="tl-body"><strong>${x.t}</strong><span>${esc(x.d)}</span></div></div>`).join('')}
+          ${timeline.map((x) => `<div class="tl-item"><div class="tl-dot ${x.done ? 'done' : ''}">${x.done ? icon('check', 12) : '•'}</div><div class="tl-body"><strong>${x.t}</strong><span>${esc(x.d)}</span></div></div>`).join('')}
         </div>
         <div class="flex gap12 mt16">
           <a class="btn btn-ghost btn-block" href="/" data-link>Inicio</a>
