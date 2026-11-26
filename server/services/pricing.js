@@ -77,24 +77,20 @@ function feeFor(amountMinor, settings, currency = 'USD') {
  */
 function quote({ amountCents, currency, country, method }) {
   const settings = getSettings();
-  // Los topes están configurados en centavos de USD; para VES usamos topes
-  // propios en bolívares (Bs 500 mínimo / Bs 5.000.000 máximo).
-  // Los topes se configuran en centavos de USD y se convierten a la moneda
-  // de cobro; VES mantiene su propio piso/techo por la inflación.
+  // No hay monto mínimo: cualquier importe mayor que cero es válido.
+  // Sólo se conserva un techo por operación (antifraude / límites del riel).
   const isVes = currency === 'VES';
   const rate = rates()[currency] || 1;
   const exp = exponent(currency);
-  const min = isVes
-    ? 50000
-    : Math.max(1, Math.round((Number(settings.min_order_cents || 500) / 100) * rate * 10 ** exp));
+  const min = 1;
   const max = isVes
     ? 500000000
-    : Math.max(min * 2, Math.round((Number(settings.max_order_cents || 500000) / 100) * rate * 10 ** exp));
+    : Math.max(1, Math.round((Number(settings.max_order_cents || 500000) / 100) * rate * 10 ** exp));
   if (!Number.isInteger(amountCents) || amountCents < min) {
-    throw new Error(`El monto mínimo es ${(min / 10 ** exponent(currency)).toFixed(exponent(currency))} ${currency}.`);
+    throw new Error('Escribe un monto mayor que cero.');
   }
   if (amountCents > max) {
-    throw new Error(`El monto máximo es ${(max / 10 ** exponent(currency)).toFixed(exponent(currency))} ${currency}.`);
+    throw new Error(`El monto máximo por operación es ${(max / 10 ** exponent(currency)).toFixed(exponent(currency))} ${currency}.`);
   }
 
   const feeCents = feeFor(amountCents, settings, currency);

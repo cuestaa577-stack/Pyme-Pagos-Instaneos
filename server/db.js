@@ -258,7 +258,7 @@ ensureColumn('transactions', 'settled_at', 'TEXT');
 const DEFAULT_SETTINGS = {
   fees_percent: String(config.fees.percent),
   fee_fixed_cents: String(config.fees.fixedCents),
-  min_order_cents: String(config.fees.minOrderCents),
+  min_order_cents: '0',
   max_order_cents: String(config.fees.maxOrderCents),
   withdrawal_fee_percent: '1.0',
   payout_fee_percent: '1.5',
@@ -280,7 +280,7 @@ const DEFAULT_SETTINGS = {
   direction_send: '1',
   direction_receive: '1',
   maintenance_mode: '0',
-  min_withdrawal_cents: '500',
+  min_withdrawal_cents: '0',
   auto_disburse: '1',
   // Datos del comercio para cobros por Pago Móvil / transferencia en Venezuela.
   ve_merchant_name: '',

@@ -911,11 +911,9 @@ async function tabAjustes() {
   const fields = [
     ['fees_percent', 'Comisión (%)'],
     ['fee_fixed_cents', 'Comisión fija (centavos USD)'],
-    ['min_order_cents', 'Mínimo orden (centavos USD)'],
     ['max_order_cents', 'Máximo orden (centavos USD)'],
     ['withdrawal_fee_percent', 'Comisión retiro (%)'],
     ['payout_fee_percent', 'Comisión payout (%)'],
-    ['min_withdrawal_cents', 'Mínimo retiro (centavos)'],
     ['ves_rate', 'Tasa Bs (VES) por USD'],
     ['cop_rate', 'Tasa COP por USD'],
     ['clp_rate', 'Tasa CLP por USD'],

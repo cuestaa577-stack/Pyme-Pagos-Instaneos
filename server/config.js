@@ -158,7 +158,7 @@ const config = {
   fees: {
     percent: Number(process.env.FEE_PERCENT || 3.5),
     fixedCents: Number(process.env.FEE_FIXED_CENTS || 50),
-    minOrderCents: Number(process.env.MIN_ORDER_CENTS || 500),
+    minOrderCents: Number(process.env.MIN_ORDER_CENTS || 0),
     maxOrderCents: Number(process.env.MAX_ORDER_CENTS || 500000),
   },
 

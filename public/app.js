@@ -1221,6 +1221,7 @@ async function refreshQuote() {
       body: JSON.stringify({ amountCents, currency, country: d.country, method: d.method }),
     });
     state.quote = q;
+    state.quoteError = '';
     if (box) box.innerHTML = `
       <div class="quote-row"><span>${d.direction === 'receive' ? 'Recibes' : 'Envías'}</span><strong>${q.destination_amount_formatted}</strong></div>
       <div class="quote-row"><span>Comisión (${q.fee_percent}%)</span><strong>${q.fee_formatted}</strong></div>
@@ -1228,6 +1229,7 @@ async function refreshQuote() {
       <div class="quote-row"><span>Tasa</span><strong>1 ${q.currency} = ${fmtRate(q.fx_rate)} ${q.destination_currency}</strong></div>`;
     return q;
   } catch (err) {
+    state.quoteError = err.message;
     if (box) box.innerHTML = `<div class="quote-row"><span style="color:var(--danger)">${esc(err.message)}</span></div>`;
     return null;
   }
@@ -1247,7 +1249,8 @@ async function renderSummary() {
   // Si el contenedor desapareció (el usuario cambió de paso) no seguimos.
   if (!document.body.contains(el)) return;
   if (!q) {
-    el.innerHTML = '<div class="sr"><span>No pudimos calcular el total</span><strong>Revisa el monto</strong></div>';
+    const msg = (state.quoteError || '').trim() || 'Escribe un monto mayor que cero.';
+    el.innerHTML = `<div class="sr"><span style="color:var(--danger)">${esc(msg)}</span><strong></strong></div>`;
     return;
   }
   el.innerHTML = `

@@ -42,9 +42,9 @@ async function createWithdrawal({
 }) {
   const settings = getSettings();
   const isVes = currency === 'VES';
-  const min = isVes ? 50000 : Number(settings.min_withdrawal_cents || 500);
-  if (!Number.isInteger(amountCents) || amountCents < min) {
-    throw new Error(`El retiro mínimo es ${(min / 10 ** exponent(currency)).toFixed(exponent(currency))} ${currency}.`);
+  // Sin monto mínimo de retiro: basta con que sea mayor que cero.
+  if (!Number.isInteger(amountCents) || amountCents < 1) {
+    throw new Error('Escribe un monto de retiro mayor que cero.');
   }
 
   let key;
