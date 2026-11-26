@@ -14,7 +14,17 @@ const config = {
   port: Number(process.env.PORT || 3000),
   appUrl: process.env.APP_URL || 'http://localhost:3000',
   publicBaseUrl: (process.env.PUBLIC_BASE_URL || 'http://localhost:3000').replace(/\/$/, ''),
-  dataDir: path.join(__dirname, '..', 'data'),
+  // Carpeta donde vive la base SQLite. En Render debe apuntar al disco persistente:
+  // DATA_DIR=/opt/render/project/src/app/data  (o /var/data si montas ahí el disco)
+  dataDir: path.resolve(process.env.DATA_DIR || path.join(__dirname, '..', 'data')),
+  // Permite usar otro nombre de archivo (útil para respaldos o multi-entorno).
+  dbFile: process.env.DB_FILE || 'remesaya.db',
+  // Respaldo automático: cada N horas se copia la base a <dataDir>/backups.
+  backupIntervalHours: Number(process.env.BACKUP_INTERVAL_HOURS || 6),
+  backupKeep: Number(process.env.BACKUP_KEEP || 20),
+  // Clave maestra para cifrar los respaldos (AES-256-GCM + scrypt).
+  // Si no se define, se usa DATA_ENCRYPTION_KEY. En producción es obligatoria.
+  backupEncryptionKey: process.env.BACKUP_ENCRYPTION_KEY || process.env.DATA_ENCRYPTION_KEY || '',
 
   dlocalgo: {
     apiUrl: (process.env.DLOCALGO_API_URL || 'https://api-sbx.dlocalgo.com').replace(/\/$/, ''),

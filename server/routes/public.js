@@ -12,8 +12,11 @@ const breb = require('../providers/breb');
 const vepay = require('../providers/vepay');
 const dlocalgo = require('../providers/dlocalgo');
 const { orderSchema, parse } = require('../lib/validate');
+const catalog = require('../lib/countries');
 
 const router = express.Router();
+
+const COUNTRIES = catalog.publicCatalog();
 
 const createLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -55,7 +58,18 @@ router.get('/config', (req, res) => {
       payout_fee_percent: Number(s.payout_fee_percent),
       min_withdrawal_cents: Number(s.min_withdrawal_cents),
     },
-    rates: { usd_ves: Number(s.ves_rate), usd_cop: Number(s.cop_rate) },
+    rates: {
+      usd_ves: Number(s.ves_rate),
+      usd_cop: Number(s.cop_rate),
+      usd_clp: Number(s.clp_rate || 950),
+      usd_pen: Number(s.pen_rate || 3.75),
+      usd_ars: Number(s.ars_rate || 1000),
+      usd_mxn: Number(s.mxn_rate || 18.5),
+      usd_dop: Number(s.dop_rate || 59),
+      usd_brl: Number(s.brl_rate || 5.4),
+      usd_eur: Number(s.eur_rate || 0.92),
+      usd_usd: 1,
+    },
     breb: {
       key_types: breb.KEY_TYPES,
       mode: breb.mode(),
@@ -72,7 +86,18 @@ router.get('/config', (req, res) => {
       currency: 'VES',
     },
     smartfields: { api_key: config.smartfields.apiKey, sdk_url: config.smartfields.sdkUrl },
-    support: { email: s.support_email, whatsapp: s.support_whatsapp },
+    support: {
+      email: s.support_email,
+      whatsapp: s.support_whatsapp,
+      phone: s.support_phone || s.support_whatsapp,
+      hours: s.support_hours,
+    },
+    directions: {
+      send: s.direction_send !== '0',
+      receive: s.direction_receive !== '0',
+    },
+    countries: COUNTRIES,
+    catalog: { methods: catalog.METHODS, rails: catalog.RAILS },
     maintenance: s.maintenance_mode === '1',
     demo_mode: config.demoFallback,
   });

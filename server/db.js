@@ -6,7 +6,7 @@ const bcrypt = require('bcryptjs');
 const config = require('./config');
 
 fs.mkdirSync(config.dataDir, { recursive: true });
-const db = new Database(path.join(config.dataDir, 'remesaya.db'));
+const db = new Database(path.join(config.dataDir, config.dbFile));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
@@ -220,8 +220,20 @@ const DEFAULT_SETTINGS = {
   breb_merchant_key: config.breb.merchantKey,
   ves_rate: '120.00',       // VES por 1 USD (configurable)
   cop_rate: '4000.00',      // COP por 1 USD (configurable)
+  clp_rate: '950.00',       // CLP por 1 USD
+  pen_rate: '3.75',         // PEN por 1 USD
+  ars_rate: '1000.00',      // ARS por 1 USD
+  mxn_rate: '18.50',        // MXN por 1 USD
+  dop_rate: '59.00',        // DOP por 1 USD
+  brl_rate: '5.40',         // BRL por 1 USD
+  eur_rate: '0.92',         // EUR por 1 USD
   support_email: 'soporte@remesaya.app',
   support_whatsapp: '+58 412 000 0000',
+  support_phone: '+58 412 000 0000',
+  support_hours: 'Lun a Dom · 8:00 a 22:00 (VET)',
+  // Interruptores de dirección: enviar y recibir.
+  direction_send: '1',
+  direction_receive: '1',
   maintenance_mode: '0',
   min_withdrawal_cents: '500',
   auto_disburse: '1',

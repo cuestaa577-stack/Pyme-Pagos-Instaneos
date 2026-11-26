@@ -1,11 +1,13 @@
-/* RemesaYa — frontend público */
+/* RemesaYa — frontend público (envíos y cobros multi-país) */
 'use strict';
+
+const ZERO_DECIMAL = ['CLP', 'COP', 'PYG', 'VES'];
 
 const state = {
   config: null,
   draft: {
+    direction: 'send',
     amount: 100,
-    currency: 'USD',
     payerCountry: 'US',
     country: 'VE',
     fullName: '',
@@ -16,7 +18,7 @@ const state = {
     beneficiaryDocument: '',
     rail: 'pago_movil',
     keyType: 'phone',
-    brebKey: '',
+    keyValue: '',
     bankCode: '',
     bankName: '',
     accountNumber: '',
@@ -29,89 +31,161 @@ const state = {
   order: null,
 };
 
-const VE_BANKS = [
-  { code: '0102', name: 'Banco de Venezuela' },
-  { code: '0105', name: 'Mercantil' },
-  { code: '0108', name: 'BBVA Provincial' },
-  { code: '0114', name: 'Bancaribe' },
-  { code: '0134', name: 'Banesco' },
-  { code: '0138', name: 'Banco Plaza' },
-  { code: '0151', name: 'BFC Banco Fondo Común' },
-  { code: '0156', name: '100% Banco' },
-  { code: '0157', name: 'DelSur' },
-  { code: '0163', name: 'Banco del Tesoro' },
-  { code: '0166', name: 'Banco Agrícola de Venezuela' },
-  { code: '0168', name: 'Bancrecer' },
-  { code: '0169', name: 'Mi Banco' },
-  { code: '0171', name: 'Banco Activo' },
-  { code: '0172', name: 'Bancamiga' },
-  { code: '0174', name: 'Banplus' },
-  { code: '0175', name: 'Banco Bicentenario' },
-  { code: '0177', name: 'Banfanb' },
-  { code: '0191', name: 'Banco Nacional de Crédito' },
+/* ---------------- catálogo de países y métodos ---------------- */
+
+const FALLBACK_COUNTRIES = [
+  { code: 'VE', name: 'Venezuela', currency: 'VES', pay: ['ve_pago_movil', 've_transfer', 've_cash', 'card'], receive: ['pago_movil_ve', 'transfer_ve', 'cash_ve'], banks: [] },
+  { code: 'CO', name: 'Colombia', currency: 'COP', pay: ['pse', 'breb', 'co_nequi', 'co_daviplata', 'card', 'cash'], receive: ['breb', 'pse', 'wallet', 'bank', 'cash_pickup'], banks: [] },
+  { code: 'CL', name: 'Chile', currency: 'CLP', pay: ['cl_webpay', 'cl_mercadopago', 'cl_transfer', 'card', 'cash_cl'], receive: ['bank', 'wallet', 'cash_pickup'], banks: [] },
+  { code: 'PE', name: 'Perú', currency: 'PEN', pay: ['pe_yape', 'pe_plin', 'pe_transfer', 'card', 'cash_pe'], receive: ['bank', 'wallet', 'cash_pickup'], banks: [] },
+  { code: 'AR', name: 'Argentina', currency: 'ARS', pay: ['ar_mercadopago', 'ar_transfer', 'card', 'cash_ar'], receive: ['bank', 'wallet', 'cash_pickup'], banks: [] },
+  { code: 'MX', name: 'México', currency: 'MXN', pay: ['mx_spei', 'mx_oxxo', 'mx_transfer', 'card', 'cash_mx'], receive: ['bank', 'wallet', 'cash_pickup'], banks: [] },
+  { code: 'EC', name: 'Ecuador', currency: 'USD', pay: ['ec_transfer', 'ec_pichincha', 'card', 'cash_ec'], receive: ['bank', 'wallet', 'cash_pickup'], banks: [] },
+  { code: 'PA', name: 'Panamá', currency: 'USD', pay: ['pa_ach', 'pa_yappy', 'card', 'cash_pa'], receive: ['bank', 'wallet', 'cash_pickup'], banks: [] },
+  { code: 'DO', name: 'Rep. Dominicana', currency: 'DOP', pay: ['do_tpago', 'do_transfer', 'card', 'cash_do'], receive: ['bank', 'wallet', 'cash_pickup'], banks: [] },
+  { code: 'ES', name: 'España', currency: 'EUR', pay: ['es_bizum', 'es_sepa', 'card', 'cash_es'], receive: ['bank', 'wallet', 'cash_pickup'], banks: [] },
+  { code: 'US', name: 'Estados Unidos', currency: 'USD', pay: ['us_ach', 'us_zelle', 'card', 'cash_us'], receive: ['bank', 'wallet', 'cash_pickup'], banks: [] },
 ];
 
-const COUNTRIES = [
-  { code: 'VE', name: 'Venezuela' },
-  { code: 'CO', name: 'Colombia' },
-  { code: 'PE', name: 'Perú' },
-  { code: 'CL', name: 'Chile' },
-  { code: 'AR', name: 'Argentina' },
-  { code: 'MX', name: 'México' },
-  { code: 'EC', name: 'Ecuador' },
-  { code: 'PA', name: 'Panamá' },
-  { code: 'DO', name: 'Rep. Dominicana' },
-  { code: 'ES', name: 'España' },
-  { code: 'US', name: 'Estados Unidos' },
-];
-
-const PAYER_COUNTRIES = [
-  { code: 'US', name: 'Estados Unidos / Otro', currency: 'USD' },
-  { code: 'CO', name: 'Colombia', currency: 'COP' },
-  { code: 'VE', name: 'Venezuela', currency: 'VES' },
-];
-
-// Chip de país sobrio (código ISO) en lugar de emoji de bandera.
-function countryChip(code) {
-  return `<span class="cc">${code}</span>`;
-}
-
-const METHOD_CATALOG = {
-  card: { ico: 'card', name: 'Tarjeta', sub: 'Visa / Mastercard · 3D Secure' },
-  card_transparent: { ico: 'spark', name: 'Tarjeta transparente', sub: 'Checkout en la página' },
-  pse: { ico: 'bank', name: 'PSE', sub: 'Débito bancario Colombia' },
-  breb: { ico: 'key', name: 'BRE-B', sub: 'Transferencia instantánea' },
-  cash: { ico: 'cash', name: 'Efectivo', sub: 'Cupón de pago' },
-  ve_pago_movil: { ico: 'phone', name: 'Pago Móvil', sub: 'Débito inmediato en bolívares' },
-  ve_transfer: { ico: 'transfer', name: 'Transferencia', sub: 'Banco venezolano en VES' },
-  ve_cash: { ico: 'cash', name: 'Efectivo', sub: 'Taquilla / agente en Venezuela' },
+const FLAGS = {
+  VE: '🇻🇪', CO: '🇨🇴', CL: '🇨🇱', PE: '🇵🇪', AR: '🇦🇷', MX: '🇲🇽',
+  EC: '🇪🇨', PA: '🇵🇦', DO: '🇩🇴', ES: '🇪🇸', US: '🇺🇸',
 };
 
-function payerCurrency(payerCountry) {
-  return payerCountry === 'VE' ? 'VES' : payerCountry === 'CO' ? 'COP' : 'USD';
+const METHOD_FALLBACK = {
+  card: { name: 'Tarjeta', sub: 'Visa / Mastercard', ico: 'card' },
+  card_transparent: { name: 'Tarjeta transparente', sub: 'Checkout en la página', ico: 'spark' },
+  cash: { name: 'Efectivo', sub: 'Cupón de pago', ico: 'cash' },
+  pse: { name: 'PSE', sub: 'Débito bancario Colombia', ico: 'bank' },
+  breb: { name: 'BRE-B', sub: 'Transferencia instantánea', ico: 'key' },
+  ve_pago_movil: { name: 'Pago Móvil', sub: 'Débito inmediato en bolívares', ico: 'phone' },
+  ve_transfer: { name: 'Transferencia', sub: 'Banco venezolano', ico: 'transfer' },
+  ve_cash: { name: 'Efectivo', sub: 'Agente en Venezuela', ico: 'cash' },
+};
+
+function countries() {
+  const list = state.config?.countries;
+  return Array.isArray(list) && list.length ? list : FALLBACK_COUNTRIES;
 }
 
-function methodsFor(payerCountry) {
-  if (payerCountry === 'VE') return ['ve_pago_movil', 've_transfer', 've_cash'];
-  if (payerCountry === 'CO') return ['card', 'card_transparent', 'pse', 'breb', 'cash'];
-  return ['card', 'card_transparent', 'cash'];
+function countryByCode(code) {
+  return countries().find((c) => c.code === code) || countries()[0];
 }
 
-function railsFor(payerCountry, destination) {
-  if (payerCountry === 'VE') return ['pago_movil_ve', 'transfer_ve', 'cash_ve'];
-  if (destination === 'VE') return ['pago_movil', 'breb', 'bank'];
-  return ['bank'];
+function flagOf(code) {
+  return FLAGS[code] || '🌎';
+}
+
+function currencyOf(code) {
+  return countryByCode(code)?.currency || 'USD';
+}
+
+function methodsFor(code) {
+  const c = countryByCode(code);
+  const list = c?.pay || ['card', 'card_transparent'];
+  return Array.from(new Set(list));
+}
+
+function methodInfo(id) {
+  return state.config?.catalog?.methods?.[id] || METHOD_FALLBACK[id] || { name: id, sub: '', ico: 'card' };
+}
+
+function railsFor(code) {
+  const c = countryByCode(code);
+  return c?.receive || ['bank'];
+}
+
+function banksFor(code) {
+  return countryByCode(code)?.banks || [];
 }
 
 function railLabel(rail) {
   return {
-    pago_movil: 'Pago Móvil',
     breb: 'BRE-B',
+    pago_movil: 'Pago Móvil',
     bank: 'Cuenta bancaria',
     pago_movil_ve: 'Pago Móvil (VES)',
     transfer_ve: 'Transferencia bancaria (VES)',
-    cash_ve: 'Efectivo (VES)',
+    cash_ve: 'Efectivo en Venezuela',
+    wallet: 'Billetera digital',
+    cash_pickup: 'Efectivo en punto de pago',
   }[rail] || 'Cuenta bancaria';
+}
+
+function railIcon(rail) {
+  return {
+    breb: 'key',
+    pago_movil: 'phone',
+    bank: 'bank',
+    pago_movil_ve: 'phone',
+    transfer_ve: 'bank',
+    cash_ve: 'cash',
+    wallet: 'wallet',
+    cash_pickup: 'cash',
+  }[rail] || 'bank';
+}
+
+function railSub(rail, code) {
+  const cur = currencyOf(code);
+  return {
+    breb: 'Llave instantánea',
+    pago_movil: 'Instantáneo a su banco',
+    bank: `Transferencia en ${cur}`,
+    pago_movil_ve: 'Débito inmediato en VES',
+    transfer_ve: 'Cuenta bancaria en VES',
+    cash_ve: 'Retiro en efectivo',
+    wallet: 'Nequi, Yape, Mercado Pago…',
+    cash_pickup: 'Retiro en efectivo',
+  }[rail] || '';
+}
+
+function toMinor(amount, currency) {
+  const factor = ZERO_DECIMAL.includes(currency) ? 1 : 100;
+  return Math.round((Number(amount) || 0) * factor);
+}
+
+function toMajor(minor, currency) {
+  const factor = ZERO_DECIMAL.includes(currency) ? 1 : 100;
+  return Number(minor || 0) / factor;
+}
+
+function rateFor(currency) {
+  const r = state.config?.rates || {};
+  return Number(r[`usd_${String(currency).toLowerCase()}`] || 1);
+}
+
+/** Monto en moneda local → centavos de USD. */
+function localToUsdCents(amount, currency) {
+  return Math.round(((Number(amount) || 0) / rateFor(currency)) * 100);
+}
+
+/** Centavos de USD → unidades menores de la moneda local. */
+function usdCentsToLocalMinor(cents, currency) {
+  return Math.round((Number(cents || 0) / 100) * rateFor(currency) * (ZERO_DECIMAL.includes(currency) ? 1 : 100));
+}
+
+/**
+ * Monto que se envía a /quote. En modo "recibir" el usuario escribe lo que
+ * quiere COBRAR en su moneda local, así que se hace la conversión inversa.
+ */
+function amountCentsForQuote() {
+  const d = state.draft;
+  const payerCur = methodInfo(d.method).currency || currencyOf(d.payerCountry);
+  if (d.direction === 'receive') {
+    const destCur = currencyOf(d.country);
+    const netUsd = localToUsdCents(d.amount, destCur);
+    return Math.max(1, usdCentsToLocalMinor(netUsd, payerCur));
+  }
+  return Math.max(1, toMinor(d.amount, payerCur));
+}
+
+function defaultAmount(direction, country) {
+  if (direction === 'receive') return Math.max(1, Math.round(100 * rateFor(currencyOf(country))));
+  return 100;
+}
+
+function payerCurrencyForDraft() {
+  return methodInfo(state.draft.method).currency || currencyOf(state.draft.payerCountry);
 }
 
 /* ---------------- utilidades ---------------- */
@@ -174,9 +248,34 @@ function navigate(path, replace = false) {
 window.addEventListener('popstate', render);
 
 /* ---------------- componentes ---------------- */
+function supportPhone() {
+  return state.config?.support?.phone || state.config?.support?.whatsapp || '+58 412 000 0000';
+}
+
+function whatsappLink(text) {
+  const digits = String(supportPhone()).replace(/[^\d]/g, '');
+  return `https://wa.me/${digits}?text=${encodeURIComponent(text || 'Hola RemesaYa, necesito ayuda con una operación.')}`;
+}
+
+function canSend() {
+  return state.config?.directions?.send !== false;
+}
+
+function canReceive() {
+  return state.config?.directions?.receive !== false;
+}
+
 function nav() {
   return `
-  <div class="nav">
+  <div class="topbar">
+    <div class="wrap topbar-inner">
+      <span class="topbar-item">${icon('phone', 13)} <a href="tel:${esc(String(supportPhone()).replace(/\s/g, ''))}">${esc(supportPhone())}</a></span>
+      <span class="topbar-sep"></span>
+      <span class="topbar-item">${icon('clock', 13)} ${esc(state.config?.support?.hours || 'Lun a Dom · 8:00 a 22:00')}</span>
+      <span class="topbar-item topbar-right">${icon('shield', 13)} Operaciones cifradas AES-256</span>
+    </div>
+  </div>
+  <div class="nav" id="site-nav">
     <div class="wrap nav-inner">
       <a class="logo" href="/" data-link>
         <span class="logo-mark">R</span>
@@ -184,40 +283,72 @@ function nav() {
       </a>
       <div class="nav-links">
         <a href="/#como-funciona" data-anchor>Cómo funciona</a>
+        <a href="/#paises" data-anchor>Países</a>
         <a href="/#vias" data-anchor>Vías de pago</a>
         <a href="/#tarifas" data-anchor>Tarifas</a>
+        <a href="/#contacto" data-anchor>Contacto</a>
+        <button class="btn btn-ghost btn-sm nav-install" id="ry-install" hidden>${icon('download', 16)} Instalar app</button>
         <a class="nav-login" href="/admin" data-link>${icon('lock', 16)} Iniciar sesión</a>
-        <a class="btn btn-primary btn-sm" href="/enviar" data-link>Enviar dinero</a>
+        ${canReceive() ? '<a class="btn btn-ghost btn-sm" href="/recibir" data-link>Recibir</a>' : ''}
+        ${canSend() ? '<a class="btn btn-primary btn-sm" href="/enviar" data-link>Enviar dinero</a>' : ''}
       </div>
       <div class="nav-mobile-actions">
-        <a class="nav-login" href="/admin" data-link>${icon('lock', 16)} Entrar</a>
-        <a class="btn btn-primary btn-sm" href="/enviar" data-link>Enviar</a>
+        ${canReceive() ? '<a class="btn btn-ghost btn-sm" href="/recibir" data-link>Recibir</a>' : ''}
+        ${canSend() ? '<a class="btn btn-primary btn-sm" href="/enviar" data-link>Enviar</a>' : ''}
+        <button class="btn btn-ghost btn-sm nav-install" id="ry-install-m" hidden>${icon('download', 16)}</button>
+        <button class="nav-burger" id="nav-burger" aria-label="Menú">${icon('menu', 20)}</button>
       </div>
+    </div>
+    <div class="nav-drawer" id="nav-drawer">
+      <a href="/#como-funciona" data-anchor>Cómo funciona</a>
+      <a href="/#paises" data-anchor>Países</a>
+      <a href="/#vias" data-anchor>Vías de pago</a>
+      <a href="/#tarifas" data-anchor>Tarifas</a>
+      <a href="/#contacto" data-anchor>Contacto</a>
+      <a href="/admin" data-link>Iniciar sesión</a>
     </div>
   </div>`;
 }
 
 function footer() {
   const s = state.config?.support || {};
+  const phone = s.phone || s.whatsapp || '+58 412 000 0000';
   return `
-  <div class="footer">
+  <div class="footer" id="contacto">
     <div class="wrap footer-inner">
-      <div>
-        <div class="logo" style="margin-bottom:10px"><span class="logo-mark">R</span><span>RemesaYa</span></div>
-        <div class="small">Remesas y pagos para venezolanos en el extranjero.</div>
-        <div class="small mt8">© ${new Date().getFullYear()} RemesaYa. Todos los derechos reservados.</div>
+      <div class="footer-brand">
+        <div class="logo" style="margin-bottom:12px"><span class="logo-mark">R</span><span>RemesaYa</span></div>
+        <div class="small muted">Remesas y pagos instantáneos entre Venezuela, Chile, Colombia, Perú, Argentina, México, Ecuador, Panamá, República Dominicana, España y Estados Unidos.</div>
+        <div class="footer-social mt16">
+          <a class="social" href="${whatsappLink()}" target="_blank" rel="noopener">${icon('phone', 16)} WhatsApp</a>
+          <a class="social" href="mailto:${esc(s.email || 'soporte@remesaya.app')}">${icon('mail', 16)} Correo</a>
+        </div>
+        <div class="small muted mt16">© ${new Date().getFullYear()} RemesaYa. Todos los derechos reservados.</div>
       </div>
-      <div class="small">
-        <div><strong>Soporte</strong></div>
-        <div class="mt8">${esc(s.email || 'soporte@remesaya.app')}</div>
-        <div>${esc(s.whatsapp || '')}</div>
+      <div class="footer-col">
+        <div class="footer-title">Contacto</div>
+        <a class="footer-phone" href="tel:${esc(String(phone).replace(/\s/g, ''))}">${esc(phone)}</a>
+        <div class="small muted">${esc(s.hours || 'Lun a Dom · 8:00 a 22:00')}</div>
+        <div class="small mt8"><a href="${whatsappLink()}" target="_blank" rel="noopener">Escríbenos por WhatsApp</a></div>
+        <div class="small mt8"><a href="mailto:${esc(s.email || 'soporte@remesaya.app')}">${esc(s.email || 'soporte@remesaya.app')}</a></div>
       </div>
-      <div class="small">
-        <div><strong>Legal</strong></div>
-        <div class="mt8">Términos y condiciones</div>
-        <div>Política de privacidad</div>
-        <div>Prevención de fraude</div>
+      <div class="footer-col">
+        <div class="footer-title">Operaciones</div>
+        <a class="small" href="/enviar" data-link>Enviar dinero</a>
+        <a class="small" href="/recibir" data-link>Recibir dinero</a>
+        <a class="small" href="/#paises" data-anchor>Países disponibles</a>
+        <a class="small" href="/#tarifas" data-anchor>Tarifas y comisiones</a>
       </div>
+      <div class="footer-col">
+        <div class="footer-title">Legal</div>
+        <div class="small">Términos y condiciones</div>
+        <div class="small">Política de privacidad</div>
+        <div class="small">Prevención de fraude</div>
+      </div>
+    </div>
+    <div class="wrap footer-bottom">
+      <span class="small muted">Cumplimos con validación de identidad (KYC) y prevención de lavado de activos.</span>
+      <span class="small muted">Hecho para la diáspora venezolana 🇻🇪</span>
     </div>
   </div>`;
 }
@@ -243,7 +374,9 @@ function statusBadge(status) {
 function landingView() {
   const c = state.config || {};
   const fees = c.fees || {};
-  const rates = c.rates || {};
+  const list = countries();
+  const totalMethods = new Set(list.flatMap((x) => x.pay || [])).size;
+
   return `
   ${nav()}
   <section class="hero">
@@ -251,19 +384,24 @@ function landingView() {
     <div class="hero-veil" aria-hidden="true"></div>
     <div class="wrap hero-inner">
       <div class="hero-copy">
-        <div class="pill"><span class="dot"></span> Entrega instantánea 24/7</div>
-        <h1 class="mt16">Envía dinero a Venezuela <span class="grad">en segundos</span>, no en días.</h1>
-        <p class="lead">RemesaYa conecta a los venezolanos en el extranjero con su familia: pagas con tarjeta, PSE, BRE-B o efectivo, y tu beneficiario recibe al instante en Pago Móvil o transferencia, validando siempre su cédula venezolana.</p>
+        <div class="pill"><span class="dot"></span> Envía y recibe · 24/7 · ${list.length} países</div>
+        <h1 class="mt16">Envía y recibe dinero <span class="grad">en segundos</span>, desde y hacia ${list.length} países.</h1>
+        <p class="lead">RemesaYa conecta Venezuela con Chile, Colombia, Perú, Argentina, México, Ecuador, Panamá, República Dominicana, España y Estados Unidos. Pagas con tarjeta, PSE, BRE-B, Webpay, Yape, SPEI, Bizum, Zelle o efectivo, y tu beneficiario recibe al instante en su banco o billetera.</p>
         <div class="hero-badges">
-          <span class="pill">${icon('id', 15)} Cédula venezolana</span>
-          <span class="pill">${icon('bolt', 15)} BRE-B instantáneo</span>
-          <span class="pill">${icon('bank', 15)} PSE Colombia</span>
+          <span class="pill">${icon('send', 15)} Enviar</span>
+          <span class="pill">${icon('wallet', 15)} Recibir</span>
+          <span class="pill">${icon('bolt', 15)} Entrega instantánea</span>
           <span class="pill">${icon('lock', 15)} Datos cifrados</span>
         </div>
         <div class="hero-stats">
-          <div><strong>${rates.usd_ves ? rates.usd_ves.toFixed(2) : '—'}</strong><span>Bs por USD</span></div>
+          <div><strong>${list.length}</strong><span>Países</span></div>
+          <div><strong>${totalMethods}</strong><span>Métodos de pago</span></div>
           <div><strong>${fees.percent ?? 3.5}%</strong><span>Comisión</span></div>
           <div><strong>< 1 min</strong><span>Entrega promedio</span></div>
+        </div>
+        <div class="hero-cta">
+          <a class="btn btn-primary" href="/enviar" data-link>${icon('send', 18)} Enviar dinero</a>
+          <a class="btn btn-ghost" href="/recibir" data-link>${icon('wallet', 18)} Quiero recibir</a>
         </div>
       </div>
     </div>
@@ -275,29 +413,32 @@ function landingView() {
       <div class="card calc-card" id="calc">
         <div class="calc-head">
           <div>
-            <div class="card-title">Calcula tu envío</div>
-            <div class="card-sub">Sin sorpresas: ves la comisión y el monto exacto que recibe tu familia.</div>
+            <div class="card-title">Calcula tu operación</div>
+            <div class="card-sub">Elige si envías o recibes: ves la comisión y el monto exacto, sin sorpresas.</div>
           </div>
-          <span class="pill">${icon('bolt', 14)} Instantáneo</span>
+          <div class="seg" id="calc-dir">
+            <button class="seg-btn sel" data-dir="send">${icon('send', 15)} Enviar</button>
+            <button class="seg-btn" data-dir="receive">${icon('wallet', 15)} Recibir</button>
+          </div>
         </div>
         <div class="calc-grid">
           <label class="field">
-            <span>Monto a enviar</span>
+            <span id="calc-amount-label">Monto a enviar</span>
             <div class="amount-input">
-              <input class="input" id="calc-amount" type="number" min="5" step="1" value="100" />
+              <input class="input" id="calc-amount" type="number" min="1" step="1" value="100" />
               <span class="cur" id="calc-cur">USD</span>
             </div>
           </label>
           <label class="field">
-            <span>Pagas desde</span>
+            <span id="calc-payer-label">Pagas desde</span>
             <select class="input" id="calc-payer">
-              ${PAYER_COUNTRIES.map((x) => `<option value="${x.code}">${x.name}</option>`).join('')}
+              ${list.map((x) => `<option value="${x.code}" ${x.code === 'US' ? 'selected' : ''}>${flagOf(x.code)} ${x.name}</option>`).join('')}
             </select>
           </label>
           <label class="field">
-            <span>Destino</span>
+            <span id="calc-country-label">Destino</span>
             <select class="input" id="calc-country">
-              ${COUNTRIES.map((x) => `<option value="${x.code}" ${x.code === 'VE' ? 'selected' : ''}>${x.name}</option>`).join('')}
+              ${list.map((x) => `<option value="${x.code}" ${x.code === 'VE' ? 'selected' : ''}>${flagOf(x.code)} ${x.name}</option>`).join('')}
             </select>
           </label>
           <label class="field">
@@ -306,22 +447,53 @@ function landingView() {
           </label>
         </div>
         <div class="quote-box" id="calc-quote"><div class="quote-row"><span>Calculando…</span></div></div>
-        <button class="btn btn-primary btn-block mt16" id="calc-go">Continuar con el envío</button>
+        <button class="btn btn-primary btn-block mt16" id="calc-go">Continuar</button>
       </div>
     </section>
   </div>
+
+  <section class="block" id="paises">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>${list.length} países, dos sentidos</h2>
+        <p>Puedes <strong>enviar</strong> dinero a cada país y también <strong>recibir</strong> desde él. Todos los métodos locales están habilitados.</p>
+      </div>
+      <div class="country-grid">
+        ${list.map((x) => `
+          <div class="country-card">
+            <div class="country-head">
+              <span class="country-flag">${flagOf(x.code)}</span>
+              <div>
+                <strong>${esc(x.name)}</strong>
+                <span class="country-cur">${esc(x.currency)}</span>
+              </div>
+            </div>
+            <div class="country-split">
+              <div>
+                <span class="mini-label">${icon('send', 12)} Pagar desde</span>
+                <div class="chips">${(x.pay || []).map((m) => `<span class="chip">${esc(methodInfo(m).name)}</span>`).join('')}</div>
+              </div>
+              <div>
+                <span class="mini-label">${icon('wallet', 12)} Recibir en</span>
+                <div class="chips">${(x.receive || []).map((r) => `<span class="chip chip-alt">${esc(railLabel(r))}</span>`).join('')}</div>
+              </div>
+            </div>
+          </div>`).join('')}
+      </div>
+    </div>
+  </section>
 
   <section class="block" id="como-funciona">
     <div class="wrap">
       <div class="section-head">
         <h2>Cuatro pasos. Menos de un minuto.</h2>
-        <p>Diseñado para que retirar el dinero sea tan rápido como recibir un mensaje.</p>
+        <p>Diseñado para que enviar o cobrar sea tan rápido como recibir un mensaje.</p>
       </div>
       <div class="steps">
-        <div class="step"><h4>Indica el monto</h4><p>Elige cuánto envías y a qué país. Ves la comisión y la tasa en tiempo real.</p></div>
-        <div class="step"><h4>Identifícate con tu cédula</h4><p>Validamos tu cédula venezolana (V, E, J, G o pasaporte) al instante.</p></div>
-        <div class="step"><h4>Paga como prefieras</h4><p>Tarjeta, PSE, BRE-B o efectivo. Todo desde la misma plataforma.</p></div>
-        <div class="step"><h4>Entrega instantánea</h4><p>Tu beneficiario recibe en Pago Móvil o transferencia, con comprobante y seguimiento.</p></div>
+        <div class="step"><span class="step-n">1</span><h4>Elige enviar o recibir</h4><p>Indica el monto, el país de origen y el de destino. Ves la comisión y la tasa al instante.</p></div>
+        <div class="step"><span class="step-n">2</span><h4>Identifícate</h4><p>Cédula venezolana o documento local (RUT, DNI, CURP, DNI/NIE). Validación inmediata.</p></div>
+        <div class="step"><span class="step-n">3</span><h4>Paga como prefieras</h4><p>Tarjeta, PSE, BRE-B, Webpay, Yape, SPEI, Bizum, Zelle, Nequi o efectivo.</p></div>
+        <div class="step"><span class="step-n">4</span><h4>Entrega instantánea</h4><p>Tu beneficiario recibe en su banco o billetera con comprobante y seguimiento.</p></div>
       </div>
     </div>
   </section>
@@ -329,27 +501,27 @@ function landingView() {
   <section class="block" id="vias">
     <div class="wrap">
       <div class="section-head">
-        <h2>Todas las vías, una sola plataforma</h2>
-        <p>Conectamos cobros internacionales con los rieles de pago que tu familia ya usa.</p>
+        <h2>Todos los rieles, una sola plataforma</h2>
+        <p>Conectamos cobros internacionales con los métodos que tu familia ya usa en cada país.</p>
       </div>
       <div class="grid3">
         <div class="rail-card">
           <div class="logo-sq rail-breb">BRE-B</div>
-          <div><h4>BRE-B instantáneo</h4><p class="muted small mt8">Transferencias inmediatas en Colombia con llave de cédula, teléfono, correo o alfanumérica. Liquidación en segundos.</p></div>
+          <div><h4>BRE-B Colombia</h4><p class="muted small mt8">Transferencias inmediatas con llave de cédula, teléfono, correo o alfanumérica. Liquidación en segundos.</p></div>
         </div>
         <div class="rail-card">
           <div class="logo-sq rail-pse">PSE</div>
-          <div><h4>PSE Colombia</h4><p class="muted small mt8">Paga desde tu banco colombiano con débito seguro. Compatible con Bancolombia, Davivienda, Bogotá, BBVA y más.</p></div>
+          <div><h4>PSE Colombia</h4><p class="muted small mt8">Débito bancario seguro desde Bancolombia, Davivienda, Bogotá, BBVA y más.</p></div>
         </div>
         <div class="rail-card">
           <div class="logo-sq rail-pm">PM</div>
-          <div><h4>Pago Móvil Venezuela</h4><p class="muted small mt8">Entrega inmediata al teléfono y banco de tu beneficiario, validando su cédula venezolana.</p></div>
+          <div><h4>Pago Móvil Venezuela</h4><p class="muted small mt8">Entrega inmediata al teléfono y banco del beneficiario, validando su cédula.</p></div>
         </div>
       </div>
       <div class="grid3 mt24">
-        <div class="feature"><div class="ico">${icon('card', 22)}</div><h4>Tarjeta internacional</h4><p>Visa y Mastercard con 3D Secure. Checkout alojado o transparente con SmartFields.</p></div>
-        <div class="feature"><div class="ico">${icon('cash', 22)}</div><h4>Efectivo</h4><p>Paga en efectivo con cupón y completa la operación sin cuenta bancaria.</p></div>
-        <div class="feature"><div class="ico">${icon('refresh', 22)}</div><h4>Cobros recurrentes</h4><p>Guarda la tarjeta con token seguro para tus suscripciones o pagos mensuales.</p></div>
+        <div class="feature"><div class="ico">${icon('card', 22)}</div><h4>Webpay · SPEI · SEPA</h4><p>Rieles locales de Chile, México y España con redirección segura del banco.</p></div>
+        <div class="feature"><div class="ico">${icon('wallet', 22)}</div><h4>Yape · Nequi · Bizum · Zelle</h4><p>Billeteras digitales para cobrar y pagar en segundos, solo con teléfono o alias.</p></div>
+        <div class="feature"><div class="ico">${icon('cash', 22)}</div><h4>Efectivo</h4><p>OXXO, Servipag, Rapipago, agentes y taquillas: paga sin cuenta bancaria.</p></div>
       </div>
     </div>
   </section>
@@ -361,10 +533,65 @@ function landingView() {
         <p>Sin cargos escondidos. Lo que ves es lo que pagas.</p>
       </div>
       <div class="grid4">
-        <div class="feature"><div class="ico">${icon('chart', 22)}</div><h4>${fees.percent ?? 3.5}% + ${money(fees.fixed_cents ?? 50, 'USD')}</h4><p>Comisión por envío. Se muestra antes de pagar.</p></div>
-        <div class="feature"><div class="ico">${icon('bank', 22)}</div><h4>${fees.withdrawal_fee_percent ?? 1}%</h4><p>Retiro del saldo de la plataforma vía BRE-B.</p></div>
+        <div class="feature"><div class="ico">${icon('chart', 22)}</div><h4>${fees.percent ?? 3.5}% + ${money(fees.fixed_cents ?? 50, 'USD')}</h4><p>Comisión por operación. Se muestra antes de pagar.</p></div>
+        <div class="feature"><div class="ico">${icon('bank', 22)}</div><h4>${fees.withdrawal_fee_percent ?? 1}%</h4><p>Retiro del saldo de la plataforma.</p></div>
         <div class="feature"><div class="ico">${icon('bolt', 22)}</div><h4>Entrega inmediata</h4><p>Sin costo adicional por velocidad.</p></div>
-        <div class="feature"><div class="ico">${icon('shield', 22)}</div><h4>Datos cifrados</h4><p>Cédulas y cuentas protegidas con AES-256-GCM.</p></div>
+        <div class="feature"><div class="ico">${icon('shield', 22)}</div><h4>Datos cifrados</h4><p>Documentos y cuentas protegidos con AES-256-GCM.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="app">
+    <div class="wrap">
+      <div class="app-card">
+        <div class="app-copy">
+          <div class="pill">${icon('download', 14)} App instalable</div>
+          <h2 class="mt16">Lleva RemesaYa en tu teléfono</h2>
+          <p class="muted mt8">Instálala como aplicación en Android, iPhone o computadora. Se abre a pantalla completa, funciona más rápido y conserva tu sesión. También puedes generar un APK para distribuirla.</p>
+          <div class="contact-actions mt24">
+            <button class="btn btn-primary" id="ry-install-hero">${icon('download', 18)} Instalar la app</button>
+            <a class="btn btn-ghost" href="/app.apk" id="ry-apk" hidden>${icon('download', 18)} Descargar APK</a>
+          </div>
+          <div class="hint mt12" id="ry-install-hint">En Android: menú ⋮ → “Instalar aplicación”. En iPhone: Compartir → “Añadir a pantalla de inicio”.</div>
+        </div>
+        <div class="app-visual">
+          <div class="phone">
+            <div class="phone-notch"></div>
+            <div class="phone-screen">
+              <div class="phone-brand"><span class="logo-mark">R</span> RemesaYa</div>
+              <div class="phone-amount">Bs 12.000,00</div>
+              <div class="phone-sub">Enviaste USD 100,00 · entrega inmediata</div>
+              <div class="phone-rows">
+                <div><span>Comisión</span><strong>USD 3,50</strong></div>
+                <div><span>Beneficiario</span><strong>María Pérez</strong></div>
+                <div><span>Vía</span><strong>Pago Móvil</strong></div>
+              </div>
+              <div class="phone-btn">Nueva operación</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block contact-block" id="contacto">
+    <div class="wrap">
+      <div class="contact-card">
+        <div>
+          <div class="pill">${icon('phone', 14)} Atención directa</div>
+          <h2 class="mt16">¿Necesitas ayuda con tu operación?</h2>
+          <p class="muted mt8">Escríbenos por WhatsApp o llámanos. Atendemos todos los días.</p>
+          <div class="contact-actions mt24">
+            <a class="btn btn-primary" href="${whatsappLink()}" target="_blank" rel="noopener">${icon('phone', 18)} WhatsApp</a>
+            <a class="btn btn-ghost" href="mailto:${esc(c.support?.email || 'soporte@remesaya.app')}">${icon('mail', 18)} Correo</a>
+          </div>
+        </div>
+        <div class="contact-info">
+          <div class="contact-row"><span>Teléfono</span><a href="tel:${esc(String(supportPhone()).replace(/\s/g, ''))}">${esc(supportPhone())}</a></div>
+          <div class="contact-row"><span>Correo</span><a href="mailto:${esc(c.support?.email || 'soporte@remesaya.app')}">${esc(c.support?.email || 'soporte@remesaya.app')}</a></div>
+          <div class="contact-row"><span>Horario</span><strong>${esc(c.support?.hours || 'Lun a Dom · 8:00 a 22:00')}</strong></div>
+          <div class="contact-row"><span>Cobertura</span><strong>${list.length} países · envío y recepción</strong></div>
+        </div>
       </div>
     </div>
   </section>
@@ -374,49 +601,57 @@ function landingView() {
 /* ---------------- wizard ---------------- */
 function wizardView() {
   const d = state.draft;
+  const isReceive = d.direction === 'receive';
   const steps = ['Monto', 'Tus datos', 'Beneficiario', 'Pago'];
   const pct = (state.step / 4) * 100;
+  const list = countries();
   let body = '';
 
   if (state.step === 1) {
-    const isVes = d.currency === 'VES';
-    const minLabel = isVes ? money(50000, 'VES') : money(state.config?.fees?.min_order_cents ?? 500, 'USD');
-    const maxLabel = isVes ? money(500000000, 'VES') : money(state.config?.fees?.max_order_cents ?? 500000, 'USD');
+    const payerCur = payerCurrencyForDraft();
+    const destCur = currencyOf(d.country);
+    const shownCur = isReceive ? destCur : payerCur;
     body = `
+      <div class="seg seg-wide" id="w-dir">
+        <button class="seg-btn ${!isReceive ? 'sel' : ''}" data-dir="send">${icon('send', 15)} Enviar dinero</button>
+        <button class="seg-btn ${isReceive ? 'sel' : ''}" data-dir="receive">${icon('wallet', 15)} Recibir dinero</button>
+      </div>
+      <div class="row2">
+        <label class="field">
+          <span>${isReceive ? 'Te envían desde' : 'Pagas desde'}</span>
+          <select class="input" id="w-payer">
+            ${list.map((x) => `<option value="${x.code}" ${x.code === d.payerCountry ? 'selected' : ''}>${flagOf(x.code)} ${x.name}</option>`).join('')}
+          </select>
+        </label>
+        <label class="field">
+          <span>${isReceive ? 'Recibes en' : 'Envías a'}</span>
+          <select class="input" id="w-country">
+            ${list.map((x) => `<option value="${x.code}" ${x.code === d.country ? 'selected' : ''}>${flagOf(x.code)} ${x.name}</option>`).join('')}
+          </select>
+        </label>
+      </div>
       <label class="field">
-        <span>Pagas desde</span>
-        <select class="input" id="w-payer">
-          ${PAYER_COUNTRIES.map((x) => `<option value="${x.code}" ${x.code === d.payerCountry ? 'selected' : ''}>${x.name}</option>`).join('')}
-        </select>
-      </label>
-      <label class="field">
-        <span>¿Cuánto deseas ${d.payerCountry === 'VE' ? 'pagar' : 'enviar'}?</span>
+        <span>${isReceive ? '¿Cuánto quieres recibir?' : '¿Cuánto deseas enviar?'}</span>
         <div class="amount-input">
-          <input class="input" id="w-amount" type="number" min="${isVes ? 500 : 5}" step="1" value="${d.amount}" />
-          <span class="cur">${d.currency}</span>
+          <input class="input" id="w-amount" type="number" min="1" step="1" value="${d.amount}" />
+          <span class="cur">${shownCur}</span>
         </div>
-        <div class="hint">Mínimo ${minLabel} · Máximo ${maxLabel}</div>
-      </label>
-      <label class="field">
-        <span>País de destino</span>
-        <select class="input" id="w-country" ${d.payerCountry === 'VE' ? 'disabled' : ''}>
-          ${COUNTRIES.map((x) => `<option value="${x.code}" ${x.code === d.country ? 'selected' : ''}>${x.name}</option>`).join('')}
-        </select>
-        ${d.payerCountry === 'VE' ? '<div class="hint">Los pagos desde Venezuela se entregan dentro de Venezuela.</div>' : ''}
+        <div class="hint">${isReceive ? `Escribes el monto en ${destCur}; calculamos cuánto paga quien te envía.` : `El monto se cobra en ${payerCur}.`}</div>
       </label>
       <div class="quote-box" id="w-quote"></div>`;
   }
 
   if (state.step === 2) {
+    const c = countryByCode(d.direction === 'receive' ? d.country : d.payerCountry);
     body = `
       <label class="field">
         <span>Nombre y apellido</span>
         <input class="input" id="w-name" placeholder="María Alejandra Pérez" value="${esc(d.fullName)}" />
       </label>
       <label class="field">
-        <span>Cédula de identidad venezolana</span>
-        <input class="input" id="w-doc" placeholder="V-12345678" value="${esc(d.document)}" autocomplete="off" />
-        <div class="hint" id="w-doc-hint">Formatos válidos: V-12345678, E-12345678, J-123456789, P-1234567</div>
+        <span>Documento de identidad (${esc(c.doc || 'Documento')})</span>
+        <input class="input" id="w-doc" placeholder="${esc(c.doc || 'Documento')}" value="${esc(d.document)}" autocomplete="off" />
+        <div class="hint" id="w-doc-hint">${d.payerCountry === 'VE' || d.country === 'VE' ? 'Formatos válidos: V-12345678, E-12345678, J-123456789, P-1234567' : `Documento local de ${esc(c.name)}`}</div>
       </label>
       <div class="row2">
         <label class="field">
@@ -425,48 +660,58 @@ function wizardView() {
         </label>
         <label class="field">
           <span>Teléfono</span>
-          <input class="input" id="w-phone" placeholder="+58 412 000 0000" value="${esc(d.phone)}" />
+          <input class="input" id="w-phone" placeholder="${esc(c.dial || '')} 000 000 0000" value="${esc(d.phone)}" />
         </label>
       </div>
-      <div class="hint">Usamos tu cédula para verificar tu identidad y proteger la operación. Se almacena cifrada.</div>`;
+      <div class="hint">Usamos tu documento para verificar tu identidad y proteger la operación. Se almacena cifrado.</div>`;
   }
 
   if (state.step === 3) {
-    const rails = railsFor(d.payerCountry, d.country);
-    const isVeRail = ['pago_movil_ve', 'transfer_ve', 'cash_ve'].includes(d.rail);
-    const banks = d.country === 'VE' || d.payerCountry === 'VE' ? VE_BANKS : (state.config?.pse?.banks || []);
-    const railIcons = {
-      pago_movil: 'phone',
-      breb: 'bolt',
-      bank: 'bank',
-      pago_movil_ve: 'phone',
-      transfer_ve: 'bank',
-      cash_ve: 'cash',
-    };
-    const railSubs = {
-      pago_movil: 'Instantáneo a su banco',
-      breb: 'Llave instantánea',
-      bank: 'Transferencia',
-      pago_movil_ve: 'Débito inmediato en VES',
-      transfer_ve: 'Cuenta bancaria en VES',
-      cash_ve: 'Retiro en efectivo',
-    };
+    const rails = railsFor(d.country);
+    if (!rails.includes(d.rail)) d.rail = rails[0];
+    const banks = banksFor(d.country);
+    const destCur = currencyOf(d.country);
+    const c = countryByCode(d.country);
+    const needsBank = ['bank', 'pago_movil', 'pago_movil_ve', 'transfer_ve', 'wallet'].includes(d.rail);
     body = `
       <label class="field">
         <span>Nombre del beneficiario</span>
         <input class="input" id="w-bname" placeholder="Luis Gómez" value="${esc(d.beneficiaryName)}" />
       </label>
       <label class="field">
-        <span>Cédula del beneficiario</span>
-        <input class="input" id="w-bdoc" placeholder="V-23456789" value="${esc(d.beneficiaryDocument)}" />
-        <div class="hint" id="w-bdoc-hint">La cédula venezolana del beneficiario es obligatoria.</div>
+        <span>Documento del beneficiario (${esc(c.doc || 'Documento')})</span>
+        <input class="input" id="w-bdoc" placeholder="${esc(c.doc || 'Documento')}" value="${esc(d.beneficiaryDocument)}" />
+        <div class="hint" id="w-bdoc-hint">Identificación obligatoria para entregar el dinero.</div>
       </label>
       <label class="field">
-        <span>Vía de entrega</span>
+        <span>Vía de entrega en ${esc(c.name)}</span>
         <div class="choice-grid">
-          ${rails.map((r) => `<div class="choice ${d.rail === r ? 'sel' : ''}" data-rail="${r}"><div class="ci">${icon(railIcons[r], 20)}</div><div><strong>${railLabel(r)}</strong><span>${railSubs[r]}</span></div></div>`).join('')}
+          ${rails.map((r) => `<div class="choice ${d.rail === r ? 'sel' : ''}" data-rail="${r}"><div class="ci">${icon(railIcon(r), 20)}</div><div><strong>${railLabel(r)}</strong><span>${railSub(r, d.country)}</span></div></div>`).join('')}
         </div>
       </label>
+      ${needsBank ? `
+        <div class="row2">
+          <label class="field">
+            <span>${d.rail === 'wallet' ? 'Billetera' : 'Banco'}</span>
+            <select class="input" id="w-bank">
+              <option value="">Selecciona…</option>
+              ${banks.map((b) => `<option value="${b.code}" data-name="${esc(b.name)}" ${d.bankCode === b.code ? 'selected' : ''}>${esc(b.name)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="field">
+            <span>${d.rail === 'wallet' ? 'Teléfono o alias' : d.rail === 'bank' || d.rail === 'transfer_ve' ? 'Número de cuenta' : 'Teléfono'}</span>
+            <input class="input" id="w-key" placeholder="${d.rail === 'wallet' ? '+56 9 1234 5678 / alias' : d.rail === 'bank' || d.rail === 'transfer_ve' ? 'Número de cuenta / IBAN / CBU' : '04141234567'}" value="${esc(d.keyValue)}" />
+          </label>
+        </div>
+        ${d.rail === 'bank' || d.rail === 'transfer_ve' ? `
+        <label class="field">
+          <span>Tipo de cuenta</span>
+          <select class="input" id="w-acctype">
+            <option value="CHECKING" ${d.accountType === 'CHECKING' ? 'selected' : ''}>Corriente</option>
+            <option value="SAVINGS" ${d.accountType === 'SAVINGS' ? 'selected' : ''}>Ahorro</option>
+          </select>
+        </label>` : ''}
+      ` : ''}
       ${d.rail === 'breb' ? `
         <label class="field">
           <span>Tipo de llave BRE-B</span>
@@ -479,54 +724,20 @@ function wizardView() {
         </label>
         <label class="field">
           <span>Llave BRE-B</span>
-          <input class="input" id="w-key" placeholder="Ej. 3001234567 o @llave" value="${esc(d.brebKey)}" />
+          <input class="input" id="w-key" placeholder="Ej. 3001234567 o @llave" value="${esc(d.keyValue)}" />
         </label>` : ''}
-      ${d.rail === 'pago_movil' || d.rail === 'pago_movil_ve' ? `
-        <div class="row2">
-          <label class="field">
-            <span>Banco</span>
-            <select class="input" id="w-bank">
-              <option value="">Selecciona…</option>
-              ${banks.map((b) => `<option value="${b.code}" data-name="${esc(b.name)}" ${d.bankCode === b.code ? 'selected' : ''}>${esc(b.name)}</option>`).join('')}
-            </select>
-          </label>
-          <label class="field">
-            <span>Teléfono de Pago Móvil</span>
-            <input class="input" id="w-key" placeholder="04141234567" value="${esc(d.brebKey)}" />
-          </label>
-        </div>` : ''}
-      ${d.rail === 'bank' || d.rail === 'transfer_ve' ? `
-        <div class="row2">
-          <label class="field">
-            <span>Banco</span>
-            <select class="input" id="w-bank">
-              <option value="">Selecciona…</option>
-              ${banks.map((b) => `<option value="${b.code}" data-name="${esc(b.name)}" ${d.bankCode === b.code ? 'selected' : ''}>${esc(b.name)}</option>`).join('')}
-            </select>
-          </label>
-          <label class="field">
-            <span>Tipo de cuenta</span>
-            <select class="input" id="w-acctype">
-              <option value="CHECKING">Corriente</option>
-              <option value="SAVINGS">Ahorro</option>
-            </select>
-          </label>
-        </div>
-        <label class="field">
-          <span>Número de cuenta</span>
-          <input class="input" id="w-key" placeholder="0102 0000 0000 0000 0000" value="${esc(d.brebKey)}" />
-        </label>` : ''}
-      ${d.rail === 'cash_ve' ? `
-        <div class="hint">El beneficiario retira en efectivo en un agente autorizado presentando su cédula. Le enviaremos un código de retiro.</div>` : ''}`;
+      ${d.rail === 'cash_ve' || d.rail === 'cash_pickup' ? `
+        <div class="hint">El beneficiario retira en efectivo en un punto autorizado presentando su documento. Le enviaremos un código de retiro.</div>` : ''}
+      <div class="hint">Entrega en ${destCur} · ${esc(c.name)}</div>`;
   }
 
   if (state.step === 4) {
-    const methods = methodsFor(d.payerCountry).map((id) => ({ id, ...METHOD_CATALOG[id] }));
+    const methods = methodsFor(d.payerCountry).map((id) => ({ id, ...methodInfo(id) }));
     body = `
       <label class="field">
         <span>¿Cómo deseas pagar?</span>
         <div class="choice-grid">
-          ${methods.map((m) => `<div class="choice ${d.method === m.id ? 'sel' : ''}" data-method="${m.id}"><div class="ci">${icon(m.ico, 20)}</div><div><strong>${m.name}</strong><span>${m.sub}</span></div></div>`).join('')}
+          ${methods.map((m) => `<div class="choice ${d.method === m.id ? 'sel' : ''}" data-method="${m.id}"><div class="ci">${icon(m.ico || 'card', 20)}</div><div><strong>${esc(m.name)}</strong><span>${esc(m.sub || '')}</span></div></div>`).join('')}
         </div>
       </label>
       <label class="field">
@@ -544,8 +755,11 @@ function wizardView() {
       <div class="wizard-steps">${steps.map((_, i) => `<div class="wstep ${i < state.step ? 'active' : ''}"></div>`).join('')}</div>
       <div class="card">
         <div class="wizard-head">
-          <h2>${steps[state.step - 1]}</h2>
-          <p>Paso ${state.step} de 4 · ${pct}% completado</p>
+          <div>
+            <span class="wizard-tag">${isReceive ? 'Recibir dinero' : 'Enviar dinero'}</span>
+            <h2>${steps[state.step - 1]}</h2>
+          </div>
+          <p>Paso ${state.step} de 4</p>
         </div>
         ${body}
         <div class="wizard-actions">
@@ -560,37 +774,53 @@ function wizardView() {
 function bindWizard() {
   const d = state.draft;
 
-  const amountEl = $('#w-amount');
-  if (amountEl) {
-    const update = () => {
-      d.amount = Number(amountEl.value) || 0;
-      refreshQuote();
-    };
-    amountEl.addEventListener('input', update);
-    $('#w-country')?.addEventListener('change', (e) => {
-      d.country = e.target.value;
-      refreshQuote();
-    });
-    $('#w-payer')?.addEventListener('change', (e) => {
-      d.payerCountry = e.target.value;
-      d.currency = payerCurrency(d.payerCountry);
+  document.querySelectorAll('#w-dir [data-dir]').forEach((el) => {
+    el.addEventListener('click', () => {
+      d.direction = el.dataset.dir;
+      if (d.direction === 'receive') {
+        d.payerCountry = 'US';
+        d.country = 'CL';
+      } else {
+        d.payerCountry = 'US';
+        d.country = 'VE';
+      }
       const allowed = methodsFor(d.payerCountry);
       if (!allowed.includes(d.method)) d.method = allowed[0];
-      const rails = railsFor(d.payerCountry, d.country);
+      const rails = railsFor(d.country);
       if (!rails.includes(d.rail)) d.rail = rails[0];
-      if (d.payerCountry === 'VE') {
-        d.country = 'VE';
-        d.currency = 'VES';
-      }
-      if (d.method === 'pse' || d.method === 'breb') d.currency = 'COP';
+      d.amount = defaultAmount(d.direction, d.country);
       render();
     });
-    refreshQuote();
+  });
+
+  const amountEl = $('#w-amount');
+  if (amountEl) {
+    amountEl.addEventListener('input', () => {
+      d.amount = Number(amountEl.value) || 0;
+      refreshQuote();
+    });
   }
+
+  $('#w-country')?.addEventListener('change', (e) => {
+    d.country = e.target.value;
+    const rails = railsFor(d.country);
+    if (!rails.includes(d.rail)) d.rail = rails[0];
+    render();
+  });
+
+  $('#w-payer')?.addEventListener('change', (e) => {
+    d.payerCountry = e.target.value;
+    const allowed = methodsFor(d.payerCountry);
+    if (!allowed.includes(d.method)) d.method = allowed[0];
+    render();
+  });
 
   document.querySelectorAll('[data-rail]').forEach((el) => {
     el.addEventListener('click', () => {
       d.rail = el.dataset.rail;
+      d.bankCode = '';
+      d.bankName = '';
+      d.keyValue = '';
       if (d.rail === 'breb') d.keyType = 'cedula';
       render();
     });
@@ -612,7 +842,13 @@ function bindWizard() {
       clearTimeout(t);
       t = setTimeout(async () => {
         const hint = $('#w-doc-hint');
-        if (!docEl.value.trim()) return;
+        if (!docEl.value.trim() || !hint) return;
+        if (d.payerCountry !== 'VE' && d.country !== 'VE') {
+          docEl.classList.remove('err');
+          hint.className = 'hint';
+          hint.textContent = 'Documento local válido.';
+          return;
+        }
         try {
           const r = await api('/validate-document', { method: 'POST', body: JSON.stringify({ document: docEl.value }) });
           docEl.classList.toggle('err', !r.valid);
@@ -621,52 +857,41 @@ function bindWizard() {
         } catch {
           /* silencioso */
         }
-      }, 350);
+      }, 380);
     });
   }
 
   const bdocEl = $('#w-bdoc');
   if (bdocEl) {
-    let t;
     bdocEl.addEventListener('input', () => {
       d.beneficiaryDocument = bdocEl.value;
-      clearTimeout(t);
-      t = setTimeout(async () => {
-        const hint = $('#w-bdoc-hint');
-        if (!bdocEl.value.trim()) return;
-        try {
-          const r = await api('/validate-document', { method: 'POST', body: JSON.stringify({ document: bdocEl.value }) });
-          bdocEl.classList.toggle('err', !r.valid);
-          hint.className = `hint ${r.valid ? 'ok' : 'error'}`;
-          hint.textContent = r.valid ? `Cédula válida · ${r.masked}` : r.error;
-        } catch {
-          /* silencioso */
-        }
-      }, 350);
+      const hint = $('#w-bdoc-hint');
+      if (!hint) return;
+      if (d.country === 'VE') {
+        hint.className = 'hint';
+        hint.textContent = 'La cédula venezolana del beneficiario es obligatoria.';
+      } else {
+        hint.className = 'hint';
+        hint.textContent = `Documento local de ${countryByCode(d.country).name}.`;
+      }
     });
   }
 
-  $('#w-back')?.addEventListener('click', () => {
-    state.step = Math.max(1, state.step - 1);
-    render();
-  });
-
-  $('#w-next')?.addEventListener('click', async (e) => {
-    const btn = e.currentTarget;
+  $('#w-next')?.addEventListener('click', async () => {
     if (!collectStep()) return;
     if (state.step < 4) {
       state.step += 1;
       render();
       return;
     }
+    const btn = $('#w-next');
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span> Creando orden…';
     try {
       const payload = buildPayload();
       const res = await api('/orders', { method: 'POST', body: JSON.stringify(payload) });
       state.order = res.order;
-      toast('Orden creada. Continúa con el pago.', 'ok');
-      navigate(res.order.checkout_url || `/pay/${res.order.public_id}`);
+      navigate(`/pay/${res.order.public_id}`);
     } catch (err) {
       toast(err.message, 'err');
       btn.disabled = false;
@@ -674,14 +899,22 @@ function bindWizard() {
     }
   });
 
+  $('#w-back')?.addEventListener('click', () => {
+    state.step = Math.max(1, state.step - 1);
+    render();
+  });
+
+  if (state.step === 1) refreshQuote();
   if (state.step === 4) renderSummary();
 }
 
 function collectStep() {
   const d = state.draft;
   if (state.step === 1) {
-    const minAmount = d.currency === 'VES' ? 500 : 5;
-    if (!d.amount || d.amount < minAmount) return toast(`Ingresa un monto válido (mínimo ${minAmount} ${d.currency}).`, 'err'), false;
+    if (!d.amount || Number(d.amount) <= 0) {
+      toast('Ingresa un monto válido.', 'err');
+      return false;
+    }
     return true;
   }
   if (state.step === 2) {
@@ -689,15 +922,21 @@ function collectStep() {
     d.document = $('#w-doc')?.value.trim() || d.document;
     d.email = $('#w-email')?.value.trim() || d.email;
     d.phone = $('#w-phone')?.value.trim() || d.phone;
-    if (d.fullName.length < 3) return toast('Escribe tu nombre completo.', 'err'), false;
-    if (!d.document) return toast('Ingresa tu cédula venezolana.', 'err'), false;
+    if (d.fullName.length < 3) {
+      toast('Escribe tu nombre completo.', 'err');
+      return false;
+    }
+    if (!d.document || d.document.length < 5) {
+      toast('Ingresa tu documento de identidad.', 'err');
+      return false;
+    }
     return true;
   }
   if (state.step === 3) {
     d.beneficiaryName = $('#w-bname')?.value.trim() || d.beneficiaryName;
     d.beneficiaryDocument = $('#w-bdoc')?.value.trim() || d.beneficiaryDocument;
     const keyEl = $('#w-key');
-    if (keyEl) d.brebKey = keyEl.value.trim();
+    if (keyEl) d.keyValue = keyEl.value.trim();
     const bankEl = $('#w-bank');
     if (bankEl) {
       d.bankCode = bankEl.value;
@@ -707,25 +946,33 @@ function collectStep() {
     if (ktEl) d.keyType = ktEl.value;
     const atEl = $('#w-acctype');
     if (atEl) d.accountType = atEl.value;
-    if (d.beneficiaryName.length < 3) return toast('Escribe el nombre del beneficiario.', 'err'), false;
-    if (!d.beneficiaryDocument) return toast('Ingresa la cédula del beneficiario.', 'err'), false;
-    if (d.rail !== 'cash_ve' && !d.brebKey) return toast('Ingresa la llave, teléfono o cuenta de entrega.', 'err'), false;
-    if (['pago_movil', 'pago_movil_ve', 'bank', 'transfer_ve'].includes(d.rail) && !d.bankCode) {
-      return toast('Selecciona el banco.', 'err'), false;
+    if (d.beneficiaryName.length < 3) {
+      toast('Escribe el nombre del beneficiario.', 'err');
+      return false;
     }
-    if (d.rail === 'bank' || d.rail === 'transfer_ve') d.accountNumber = d.brebKey;
+    if (!d.beneficiaryDocument || d.beneficiaryDocument.length < 5) {
+      toast('Ingresa el documento del beneficiario.', 'err');
+      return false;
+    }
+    if (['bank', 'pago_movil', 'pago_movil_ve', 'transfer_ve', 'wallet'].includes(d.rail)) {
+      if (!d.bankCode) {
+        toast(d.rail === 'wallet' ? 'Selecciona la billetera.' : 'Selecciona el banco.', 'err');
+        return false;
+      }
+      if (!d.keyValue) {
+        toast('Ingresa el teléfono, cuenta o alias de entrega.', 'err');
+        return false;
+      }
+    }
+    if (d.rail === 'breb' && !d.keyValue) {
+      toast('Ingresa la llave BRE-B.', 'err');
+      return false;
+    }
+    if (d.rail === 'bank' || d.rail === 'transfer_ve') d.accountNumber = d.keyValue;
     return true;
   }
   if (state.step === 4) {
     d.description = $('#w-desc')?.value.trim() || '';
-    if (d.method === 'pse' && d.currency !== 'COP') {
-      toast('PSE opera en pesos colombianos. Cambia la moneda a COP.', 'err');
-      return false;
-    }
-    if (d.method.startsWith('ve_') && d.currency !== 'VES') {
-      toast('Los pagos desde Venezuela se procesan en bolívares (VES).', 'err');
-      return false;
-    }
     return true;
   }
   return true;
@@ -733,9 +980,11 @@ function collectStep() {
 
 function buildPayload() {
   const d = state.draft;
-  const isVe = d.method.startsWith('ve_');
-  const currency = isVe ? 'VES' : ['pse', 'breb'].includes(d.method) ? 'COP' : d.currency;
+  const method = methodInfo(d.method);
+  const currency = method.currency || currencyOf(d.payerCountry);
+  const amountCents = amountCentsForQuote();
   return {
+    direction: d.direction,
     fullName: d.fullName,
     email: d.email || undefined,
     phone: d.phone || undefined,
@@ -744,15 +993,15 @@ function buildPayload() {
     beneficiaryDocument: d.beneficiaryDocument,
     rail: d.rail,
     keyType: d.rail === 'breb' ? d.keyType : 'phone',
-    brebKey: d.brebKey,
+    brebKey: d.keyValue || undefined,
     bankCode: d.bankCode || undefined,
     bankName: d.bankName || undefined,
-    accountNumber: d.rail === 'bank' || d.rail === 'transfer_ve' ? d.accountNumber || d.brebKey : undefined,
+    accountNumber: ['bank', 'transfer_ve'].includes(d.rail) ? d.accountNumber || d.keyValue : undefined,
     accountType: d.accountType,
-    amountCents: Math.round(Number(d.amount) * 100),
+    amountCents,
     currency,
-    payerCountry: isVe ? 'VE' : d.method === 'pse' ? 'CO' : d.payerCountry || 'US',
-    country: isVe ? 'VE' : d.country,
+    payerCountry: d.payerCountry,
+    country: d.country,
     method: d.method,
     description: d.description || undefined,
   };
@@ -761,20 +1010,21 @@ function buildPayload() {
 async function refreshQuote() {
   const d = state.draft;
   const box = $('#w-quote') || $('#calc-quote');
-  if (!box) return;
-  const amountCents = Math.round(Number(d.amount) * 100);
-  if (!amountCents) return;
+  if (!box) return null;
+  const amountCents = amountCentsForQuote();
+  if (!amountCents) return null;
+  const method = methodInfo(d.method);
+  const currency = method.currency || currencyOf(d.payerCountry);
   try {
     const q = await api('/quote', {
       method: 'POST',
-      body: JSON.stringify({ amountCents, currency: d.currency, country: d.country, method: d.method }),
+      body: JSON.stringify({ amountCents, currency, country: d.country, method: d.method }),
     });
     state.quote = q;
     box.innerHTML = `
-      <div class="quote-row"><span>Envías</span><strong>${q.amount_formatted}</strong></div>
+      <div class="quote-row"><span>${d.direction === 'receive' ? 'Recibes' : 'Envías'}</span><strong>${q.destination_amount_formatted}</strong></div>
       <div class="quote-row"><span>Comisión (${q.fee_percent}%)</span><strong>${q.fee_formatted}</strong></div>
-      <div class="quote-row total"><span>Total a pagar</span><strong>${q.total_formatted}</strong></div>
-      <div class="quote-row"><span>Recibe tu beneficiario</span><strong>${q.destination_amount_formatted}</strong></div>
+      <div class="quote-row total"><span>${d.direction === 'receive' ? 'Paga quien te envía' : 'Total a pagar'}</span><strong>${q.total_formatted}</strong></div>
       <div class="quote-row"><span>Tasa</span><strong>1 ${q.currency} = ${q.fx_rate} ${q.destination_currency}</strong></div>`;
     return q;
   } catch (err) {
@@ -790,11 +1040,13 @@ async function renderSummary() {
   const q = await refreshQuote();
   if (!q) return;
   el.innerHTML = `
-    <div class="sr"><span>Envías</span><strong>${q.amount_formatted}</strong></div>
+    <div class="sr"><span>Dirección</span><strong>${d.direction === 'receive' ? 'Recibir' : 'Enviar'}</strong></div>
+    <div class="sr"><span>Origen → destino</span><strong>${esc(countryByCode(d.payerCountry).name)} → ${esc(countryByCode(d.country).name)}</strong></div>
+    <div class="sr"><span>Monto</span><strong>${q.amount_formatted}</strong></div>
     <div class="sr"><span>Comisión</span><strong>${q.fee_formatted}</strong></div>
     <div class="sr"><span>Total</span><strong>${q.total_formatted}</strong></div>
     <div class="sr"><span>Beneficiario</span><strong>${esc(d.beneficiaryName)}</strong></div>
-    <div class="sr"><span>Cédula</span><strong>${esc(d.beneficiaryDocument)}</strong></div>
+    <div class="sr"><span>Documento</span><strong>${esc(d.beneficiaryDocument)}</strong></div>
     <div class="sr"><span>Entrega</span><strong>${railLabel(d.rail)}</strong></div>
     <div class="sr"><span>Recibe</span><strong style="color:var(--brand)">${q.destination_amount_formatted}</strong></div>`;
 }
@@ -895,7 +1147,7 @@ async function checkoutView(publicId) {
         <button class="btn btn-primary btn-block mt16" id="ve-paid">${isCash ? 'Ya pagué en efectivo' : 'Ya realicé el pago'}</button>
         <div class="hint mt8">La confirmación llega automáticamente por webhook del agregador venezolano.</div>
       </div>`;
-  } else {
+  } else if (order.method === 'card') {
     panel = `
       <div class="panel" style="margin:0">
         <div class="card-title">Pago con tarjeta</div>
@@ -905,6 +1157,20 @@ async function checkoutView(publicId) {
         </div>
         <button class="btn btn-primary btn-block" id="hosted-pay">Pagar ${order.amount_formatted}</button>
         <div class="hint mt8">Acepta Visa, Mastercard y American Express.</div>
+      </div>`;
+  } else {
+    const info = methodInfo(order.method);
+    panel = `
+      <div class="panel" style="margin:0">
+        <div class="card-title">Paga con ${esc(info.name)}</div>
+        <div class="card-sub">${esc(info.sub || 'Método de pago local')} · ${order.amount_formatted}</div>
+        <div class="summary-list">
+          <div class="sr"><span>Método</span><strong>${esc(info.name)}</strong></div>
+          <div class="sr"><span>Monto exacto</span><strong>${order.amount_formatted}</strong></div>
+          <div class="sr"><span>Referencia</span><strong class="mono">${esc(order.public_id)}</strong></div>
+        </div>
+        <button class="btn btn-primary btn-block mt16" id="local-paid">Ya realicé el pago</button>
+        <div class="hint mt8">La confirmación llega automáticamente cuando el proveedor valida la operación.</div>
       </div>`;
   }
 
@@ -935,7 +1201,7 @@ async function checkoutView(publicId) {
       <div class="card">
         <div class="summary-list" style="margin-bottom:18px">
           <div class="sr"><span>Beneficiario</span><strong>${esc(order.beneficiary_name)}</strong></div>
-          <div class="sr"><span>Cédula</span><strong>${esc(order.beneficiary_doc_type)}-***${esc(order.beneficiary_doc_last4)}</strong></div>
+          <div class="sr"><span>Documento</span><strong>${esc(order.beneficiary_doc_type)}-***${esc(order.beneficiary_doc_last4)}</strong></div>
           <div class="sr"><span>Entrega</span><strong>${railLabel(order.rail)}</strong></div>
           <div class="sr"><span>Comisión</span><strong>${order.fee_formatted}</strong></div>
         </div>
@@ -973,7 +1239,7 @@ function bindCheckout(publicId) {
     setTimeout(() => approve('approve'), 900);
   });
 
-  ['#breb-paid', '#cash-paid', '#ve-paid', '#hosted-pay'].forEach((sel) => {
+  ['#breb-paid', '#cash-paid', '#ve-paid', '#hosted-pay', '#local-paid'].forEach((sel) => {
     $(sel)?.addEventListener('click', () => {
       const isDemo = ['demo', 'pse_simulator', 'breb_simulator', 'vepay_simulator'].includes(state.order?.provider);
       if (isDemo) approve('approve');
@@ -1033,8 +1299,8 @@ async function successView(publicId) {
     <div class="checkout">
       <div class="card" style="text-align:center">
         <div style="font-size:3.4rem;line-height:1">${ok ? icon('checkCircle', 54) : bad ? icon('alert', 54) : icon('clock', 54)}</div>
-        <h2 class="mt16">${ok ? '¡Envío exitoso!' : bad ? 'El pago no se completó' : 'Procesando tu pago'}</h2>
-        <p class="muted mt8">${ok ? 'Tu beneficiario ya puede disponer del dinero.' : bad ? 'No se realizó ningún cargo. Puedes intentarlo de nuevo.' : 'Estamos confirmando la operación con el proveedor.'}</p>
+        <h2 class="mt16">${ok ? (order.metadata?.direction === 'receive' ? '¡Cobro exitoso!' : '¡Envío exitoso!') : bad ? 'El pago no se completó' : 'Procesando tu pago'}</h2>
+        <p class="muted mt8">${ok ? (order.metadata?.direction === 'receive' ? 'El dinero ya está disponible para ti.' : 'Tu beneficiario ya puede disponer del dinero.') : bad ? 'No se realizó ningún cargo. Puedes intentarlo de nuevo.' : 'Estamos confirmando la operación con el proveedor.'}</p>
         <div class="mt24" style="font-size:2rem;font-weight:800">${order.destination_amount_formatted}</div>
         <div class="hint">para ${esc(order.beneficiary_name)} · ${esc(order.beneficiary_doc_type)}-***${esc(order.beneficiary_doc_last4)}</div>
         <div class="mt16">${statusBadge(order.status)}</div>
@@ -1068,6 +1334,22 @@ async function ensureConfig() {
   }
 }
 
+function defaultDraft(direction) {
+  const d = state.draft;
+  d.direction = direction;
+  d.payerCountry = 'US';
+  d.country = direction === 'receive' ? 'CL' : 'VE';
+  const allowed = methodsFor(d.payerCountry);
+  if (!allowed.includes(d.method)) d.method = allowed[0];
+  const rails = railsFor(d.country);
+  if (!rails.includes(d.rail)) d.rail = rails[0];
+  d.bankCode = '';
+  d.bankName = '';
+  d.keyValue = '';
+  d.accountNumber = '';
+  d.amount = defaultAmount(direction, d.country);
+}
+
 async function render() {
   await ensureConfig();
   const path = window.location.pathname.replace(/\/+$/, '') || '/';
@@ -1085,6 +1367,20 @@ async function render() {
     html = landingView();
     bind = bindLanding;
   } else if (parts[0] === 'enviar') {
+    if (!state.wizardStarted) {
+      defaultDraft('send');
+      state.wizardStarted = true;
+      state.step = 1;
+    }
+    html = wizardView();
+    bind = bindWizard;
+  } else if (parts[0] === 'recibir') {
+    if (state.wizardDirection !== 'receive') {
+      defaultDraft('receive');
+      state.wizardDirection = 'receive';
+      state.wizardStarted = true;
+      state.step = 1;
+    }
     html = wizardView();
     bind = bindWizard;
   } else if (parts[0] === 'pay' && parts[1]) {
@@ -1104,7 +1400,10 @@ async function render() {
     a.addEventListener('click', (e) => {
       if (e.metaKey || e.ctrlKey) return;
       e.preventDefault();
-      navigate(a.getAttribute('href'));
+      const href = a.getAttribute('href');
+      if (href === '/enviar') state.wizardStarted = false;
+      if (href === '/recibir') state.wizardDirection = null;
+      navigate(href);
     });
   });
   document.querySelectorAll('[data-anchor]').forEach((a) => {
@@ -1115,62 +1414,185 @@ async function render() {
       document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
     });
   });
+
+  const burger = $('#nav-burger');
+  const drawer = $('#nav-drawer');
+  burger?.addEventListener('click', () => drawer?.classList.toggle('open'));
+
+  setupPwa();
+
   window.scrollTo({ top: 0, behavior: 'instant' });
+}
+
+/* ---------------- PWA: instalación y estado de conexión ---------------- */
+function isStandalone() {
+  return (
+    window.matchMedia('(display-mode: standalone)').matches ||
+    window.matchMedia('(display-mode: window-controls-overlay)').matches ||
+    window.navigator.standalone === true
+  );
+}
+
+function isIos() {
+  return /iphone|ipad|ipod/i.test(window.navigator.userAgent);
+}
+
+function setupPwa() {
+  const buttons = [$('#ry-install'), $('#ry-install-m'), $('#ry-install-hero')].filter(Boolean);
+  const hint = $('#ry-install-hint');
+  const apk = $('#ry-apk');
+
+  // Si ya está instalada, no mostramos los botones.
+  if (isStandalone()) {
+    buttons.forEach((b) => (b.hidden = true));
+    if (hint) hint.textContent = 'Ya estás usando la app instalada. ¡Todo listo!';
+  } else if (window.__ryInstall) {
+    buttons.forEach((b) => (b.hidden = false));
+  } else if (isIos() && hint) {
+    hint.textContent = 'En iPhone: toca Compartir ↑ y luego “Añadir a pantalla de inicio”.';
+  }
+
+  // Muestra el botón cuando el navegador avisa que es instalable.
+  document.addEventListener('ry-installable', () => {
+    if (isStandalone()) return;
+    buttons.forEach((b) => (b.hidden = false));
+  });
+  document.addEventListener('ry-installed', () => {
+    buttons.forEach((b) => (b.hidden = true));
+    toast('App instalada. ¡Ya puedes abrirla desde tu pantalla de inicio!', 'ok');
+  });
+
+  buttons.forEach((b) => {
+    if (b.dataset.bound) return;
+    b.dataset.bound = '1';
+    b.addEventListener('click', async () => {
+      const evt = window.__ryInstall;
+      if (!evt) {
+        toast(
+          isIos()
+            ? 'En iPhone: Compartir ↑ → Añadir a pantalla de inicio.'
+            : 'Abre el menú del navegador y elige “Instalar aplicación”.',
+          ''
+        );
+        return;
+      }
+      evt.prompt();
+      try {
+        const choice = await evt.userChoice;
+        if (choice?.outcome === 'accepted') toast('Instalando RemesaYa…', 'ok');
+      } catch {
+        /* ignorar */
+      }
+      window.__ryInstall = null;
+    });
+  });
+
+  // Barra de "sin conexión" (los datos financieros nunca se cachean).
+  let bar = $('#ry-offline');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'ry-offline';
+    bar.className = 'offline-bar';
+    bar.innerHTML = `${icon('wifiOff', 15)} <span>Sin conexión. Puedes ver la app, pero no enviar ni recibir dinero.</span>`;
+    document.body.appendChild(bar);
+  }
+  const sync = () => bar.classList.toggle('show', !navigator.onLine);
+  window.addEventListener('online', sync);
+  window.addEventListener('offline', sync);
+  sync();
 }
 
 function bindLanding() {
   const amountEl = $('#calc-amount');
+  const payerEl = $('#calc-payer');
   const countryEl = $('#calc-country');
   const methodEl = $('#calc-method');
-  const payerEl = $('#calc-payer');
   const curEl = $('#calc-cur');
+  const quoteEl = $('#calc-quote');
+  const amountLabel = $('#calc-amount-label');
+  const payerLabel = $('#calc-payer-label');
+  const countryLabel = $('#calc-country-label');
+  let direction = 'send';
 
   const fillMethods = () => {
     const payer = payerEl?.value || 'US';
     const allowed = methodsFor(payer);
     if (methodEl) {
-      methodEl.innerHTML = allowed.map((id) => `<option value="${id}">${METHOD_CATALOG[id].name}</option>`).join('');
+      methodEl.innerHTML = allowed
+        .map((id) => `<option value="${id}">${esc(methodInfo(id).name)}</option>`)
+        .join('');
     }
-    if (curEl) curEl.textContent = payerCurrency(payer);
-    if (payer === 'VE' && countryEl) {
-      countryEl.value = 'VE';
-      countryEl.disabled = true;
-    } else if (countryEl) {
-      countryEl.disabled = false;
+    if (curEl) curEl.textContent = direction === 'receive' ? currencyOf(countryEl?.value || 'VE') : currencyOf(payer);
+  };
+
+  const refresh = async () => {
+    if (!quoteEl) return;
+    const payer = payerEl?.value || 'US';
+    const country = countryEl?.value || 'VE';
+    const method = methodEl?.value || 'card';
+    const amount = Number(amountEl?.value) || 0;
+    if (!amount) {
+      quoteEl.innerHTML = '<div class="quote-row"><span>Ingresa un monto para ver la cotizaci\u00f3n</span></div>';
+      return;
+    }
+    const payerCur = methodInfo(method).currency || currencyOf(payer);
+    const destCur = currencyOf(country);
+    let amountCents;
+    if (direction === 'receive') {
+      const netUsd = localToUsdCents(amount, destCur);
+      amountCents = Math.max(1, usdCentsToLocalMinor(netUsd, payerCur));
+    } else {
+      amountCents = Math.max(1, toMinor(amount, payerCur));
+    }
+    try {
+      const q = await api('/quote', {
+        method: 'POST',
+        body: JSON.stringify({ amountCents, currency: payerCur, country, method }),
+      });
+      quoteEl.innerHTML = `
+        <div class="quote-row"><span>${direction === 'receive' ? 'Recibes' : 'Env\u00edas'}</span><strong>${q.destination_amount_formatted}</strong></div>
+        <div class="quote-row"><span>Comisi\u00f3n (${q.fee_percent}%)</span><strong>${q.fee_formatted}</strong></div>
+        <div class="quote-row total"><span>${direction === 'receive' ? 'Paga quien te env\u00eda' : 'Total a pagar'}</span><strong>${q.total_formatted}</strong></div>
+        <div class="quote-row"><span>Tasa</span><strong>1 ${q.currency} = ${q.fx_rate} ${q.destination_currency}</strong></div>`;
+    } catch (err) {
+      quoteEl.innerHTML = `<div class="quote-row"><span style="color:var(--danger)">${esc(err.message)}</span></div>`;
     }
   };
 
-  const sync = () => {
-    const payer = payerEl?.value || 'US';
-    state.draft.amount = Number(amountEl.value) || 0;
-    state.draft.country = countryEl.value;
-    state.draft.payerCountry = payer;
-    state.draft.currency = payerCurrency(payer);
-    state.draft.method = methodEl.value;
-    refreshQuote();
-  };
+  document.querySelectorAll('#calc-dir [data-dir]').forEach((el) => {
+    el.addEventListener('click', () => {
+      direction = el.dataset.dir;
+      document.querySelectorAll('#calc-dir [data-dir]').forEach((x) => x.classList.toggle('sel', x === el));
+      if (amountLabel) amountLabel.textContent = direction === 'receive' ? 'Monto a recibir' : 'Monto a enviar';
+      if (payerLabel) payerLabel.textContent = direction === 'receive' ? 'Te env\u00edan desde' : 'Pagas desde';
+      if (countryLabel) countryLabel.textContent = direction === 'receive' ? 'Recibes en' : 'Destino';
+      fillMethods();
+      refresh();
+    });
+  });
 
   fillMethods();
-  amountEl?.addEventListener('input', sync);
-  countryEl?.addEventListener('change', sync);
-  methodEl?.addEventListener('change', sync);
-  payerEl?.addEventListener('change', () => {
-    fillMethods();
-    sync();
-  });
-  sync();
+  refresh();
+
+  amountEl?.addEventListener('input', refresh);
+  countryEl?.addEventListener('change', () => { fillMethods(); refresh(); });
+  methodEl?.addEventListener('change', refresh);
+  payerEl?.addEventListener('change', () => { fillMethods(); refresh(); });
 
   $('#calc-go')?.addEventListener('click', () => {
     const payer = payerEl?.value || 'US';
-    state.draft.amount = Number(amountEl.value) || 100;
-    state.draft.country = payer === 'VE' ? 'VE' : countryEl.value;
+    const country = countryEl?.value || 'VE';
+    state.draft.direction = direction;
+    state.draft.amount = Number(amountEl?.value) || defaultAmount(direction, country);
     state.draft.payerCountry = payer;
-    state.draft.currency = payerCurrency(payer);
-    state.draft.method = methodEl.value;
-    const rails = railsFor(payer, state.draft.country);
+    state.draft.country = country;
+    state.draft.method = methodEl?.value || 'card';
+    const rails = railsFor(country);
     state.draft.rail = rails[0];
     state.step = 1;
-    navigate('/enviar');
+    state.wizardStarted = true;
+    state.wizardDirection = direction;
+    navigate(direction === 'receive' ? '/recibir' : '/enviar');
   });
 }
 

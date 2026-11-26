@@ -40,12 +40,19 @@ function money(cents, currency) {
   }
 }
 
-function toast(message, type = '') {
+function toast(message, type = '', duration = 3800) {
   const el = $('#toast');
   el.textContent = message;
   el.className = `toast show ${type}`;
   clearTimeout(el._t);
-  el._t = setTimeout(() => (el.className = 'toast'), 3800);
+  el._t = setTimeout(() => (el.className = 'toast'), duration);
+}
+
+/* Icono de ojo para mostrar/ocultar la contraseña. */
+function eyeIcon(open) {
+  return open
+    ? `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>`
+    : `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 5.2A9.9 9.9 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-2.4 3.3"/><path d="M6.5 6.6C3.8 8.3 2 12 2 12s3.6 7 10 7a9.6 9.6 0 0 0 4.2-.9"/><path d="M3 3l18 18"/></svg>`;
 }
 
 async function api(path, options = {}) {
@@ -73,45 +80,101 @@ function badge(status) {
 
 /* ---------------- login ---------------- */
 function renderLogin() {
+  const savedEmail = localStorage.getItem('ry_admin_email') || '';
+  const remembered = localStorage.getItem('ry_admin_remember') === '1';
   root().innerHTML = `
     <div class="login">
+      <div class="login-bg" aria-hidden="true"></div>
       <div class="card login-card">
-        <div class="logo">R</div>
-        <h2>Panel de administración</h2>
+        <div class="login-brand">
+          <div class="logo">R</div>
+          <div>
+            <div class="login-brand-name">RemesaYa</div>
+            <div class="login-brand-sub">Consola del propietario</div>
+          </div>
+        </div>
+        <h2 class="mt16">Panel de administración</h2>
         <p class="muted small mt8">Acceso exclusivo del propietario de la plataforma.</p>
         <label class="field mt16">
           <span>Correo</span>
-          <input class="input" id="lg-email" type="email" placeholder="admin@tudominio.com" autocomplete="username" />
+          <input class="input" id="lg-email" type="email" placeholder="admin@tudominio.com" autocomplete="username" value="${esc(savedEmail)}" />
         </label>
         <label class="field">
           <span>Contraseña</span>
-          <input class="input" id="lg-pass" type="password" placeholder="••••••••" autocomplete="current-password" />
+          <div class="pass-wrap">
+            <input class="input" id="lg-pass" type="password" placeholder="••••••••" autocomplete="current-password" />
+            <button type="button" class="pass-eye" id="lg-eye" aria-label="Mostrar contraseña" title="Mostrar contraseña">
+              ${eyeIcon(false)}
+            </button>
+          </div>
         </label>
+        <div class="login-row">
+          <label class="check">
+            <input type="checkbox" id="lg-remember" ${remembered ? 'checked' : ''} />
+            <span>Recordarme</span>
+          </label>
+          <a href="#" class="link-mini" id="lg-forgot">¿Olvidaste tu contraseña?</a>
+        </div>
         <button class="btn btn-primary btn-block mt16" id="lg-go">Entrar</button>
         <div class="hint mt16" style="text-align:center"><a href="/" data-home>← Volver al sitio</a></div>
       </div>
     </div>`;
+
+  const passEl = $('#lg-pass');
+  const eyeEl = $('#lg-eye');
+  const toggleEye = () => {
+    const show = passEl.type === 'password';
+    passEl.type = show ? 'text' : 'password';
+    eyeEl.innerHTML = eyeIcon(show);
+    eyeEl.setAttribute('aria-label', show ? 'Ocultar contraseña' : 'Mostrar contraseña');
+    eyeEl.title = show ? 'Ocultar contraseña' : 'Mostrar contraseña';
+    passEl.focus();
+  };
+  eyeEl.addEventListener('click', toggleEye);
+  passEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      passEl.type = 'password';
+      eyeEl.innerHTML = eyeIcon(false);
+    }
+  });
+
+  $('#lg-forgot').addEventListener('click', (e) => {
+    e.preventDefault();
+    toast('El acceso se restablece en el servidor: ejecuta "node server/scripts/reset-admin.js" con la nueva clave en ADMIN_PASSWORD.', 'ok', 9000);
+  });
+
   const submit = async () => {
     const email = $('#lg-email').value.trim();
-    const password = $('#lg-pass').value;
+    const password = passEl.value;
     if (!email || !password) return toast('Completa correo y contraseña.', 'err');
+    const remember = $('#lg-remember').checked;
     try {
       const res = await api('/login', { method: 'POST', body: JSON.stringify({ email, password }) });
       A.admin = res.admin;
       A.csrf = res.csrf;
       sessionStorage.setItem('ry_csrf', res.csrf);
+      if (remember) {
+        localStorage.setItem('ry_admin_email', email);
+        localStorage.setItem('ry_admin_remember', '1');
+      } else {
+        localStorage.removeItem('ry_admin_email');
+        localStorage.removeItem('ry_admin_remember');
+      }
       toast('Bienvenido de nuevo.', 'ok');
       boot();
     } catch (err) {
       toast(err.message, 'err');
+      passEl.classList.add('shake');
+      setTimeout(() => passEl.classList.remove('shake'), 420);
     }
   };
   $('#lg-go').addEventListener('click', submit);
-  $('#lg-pass').addEventListener('keydown', (e) => e.key === 'Enter' && submit());
+  passEl.addEventListener('keydown', (e) => e.key === 'Enter' && submit());
   $('[data-home]')?.addEventListener('click', (e) => {
     e.preventDefault();
     window.location.href = '/';
   });
+  if (savedEmail) passEl.focus();
 }
 
 /* ---------------- shell ---------------- */
@@ -600,10 +663,19 @@ async function tabAjustes() {
     ['withdrawal_fee_percent', 'Comisión retiro (%)'],
     ['payout_fee_percent', 'Comisión payout (%)'],
     ['min_withdrawal_cents', 'Mínimo retiro (centavos)'],
-    ['ves_rate', 'Tasa Bs por USD'],
+    ['ves_rate', 'Tasa Bs (VES) por USD'],
     ['cop_rate', 'Tasa COP por USD'],
+    ['clp_rate', 'Tasa CLP por USD'],
+    ['pen_rate', 'Tasa PEN por USD'],
+    ['ars_rate', 'Tasa ARS por USD'],
+    ['mxn_rate', 'Tasa MXN por USD'],
+    ['dop_rate', 'Tasa DOP por USD'],
+    ['brl_rate', 'Tasa BRL por USD'],
+    ['eur_rate', 'Tasa EUR por USD'],
     ['support_email', 'Correo de soporte'],
     ['support_whatsapp', 'WhatsApp de soporte'],
+    ['support_phone', 'Teléfono de contacto visible'],
+    ['support_hours', 'Horario de atención'],
     ['breb_merchant_key', 'Llave BRE-B del comercio'],
   ];
   $('#panel').innerHTML = `
@@ -620,8 +692,38 @@ async function tabAjustes() {
           <select class="input" data-set="maintenance_mode"><option value="0" ${settings.maintenance_mode !== '1' ? 'selected' : ''}>Sitio activo</option><option value="1" ${settings.maintenance_mode === '1' ? 'selected' : ''}>Mantenimiento</option></select>
         </label>
       </div>
+      <div class="row2 mt16">
+        <label class="field"><span>¿Permitir enviar?</span>
+          <select class="input" data-set="direction_send"><option value="1" ${settings.direction_send !== '0' ? 'selected' : ''}>Sí, enviar habilitado</option><option value="0" ${settings.direction_send === '0' ? 'selected' : ''}>No</option></select>
+        </label>
+        <label class="field"><span>¿Permitir recibir?</span>
+          <select class="input" data-set="direction_receive"><option value="1" ${settings.direction_receive !== '0' ? 'selected' : ''}>Sí, recibir habilitado</option><option value="0" ${settings.direction_receive === '0' ? 'selected' : ''}>No</option></select>
+        </label>
+      </div>
       <button class="btn btn-primary mt16" id="set-go">Guardar cambios</button>
+    </div>
+    <div class="panel mt16" id="bk-panel">
+      <div class="panel-head"><h3>Respaldos cifrados</h3></div>
+      <p class="muted small">AES-256-GCM + scrypt. Sin la clave <span class="mono">BACKUP_ENCRYPTION_KEY</span> los archivos son irrecuperables.</p>
+      <div id="bk-body" class="muted small">Cargando…</div>
+      <a class="btn btn-primary mt16" href="/api/admin/backup" download>Descargar respaldo cifrado</a>
     </div>`;
+  api('/backups')
+    .then((b) => {
+      const rows = (b.backups || [])
+        .map(
+          (x) =>
+            `<tr><td class="mono small">${esc(x.name)}</td><td>${(x.size / 1024).toFixed(0)} KB</td><td class="muted small">${esc(x.created_at)}</td></tr>`
+        )
+        .join('');
+      $('#bk-body').innerHTML = `
+        <p class="small">Cada <b>${b.interval_hours} h</b> · se conservan <b>${b.keep}</b> · clave configurada: <b>${b.encryption?.key_configured ? 'sí' : 'NO'}</b></p>
+        ${rows ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Archivo</th><th>Tamaño</th><th>Fecha</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="muted small">Todavía no hay respaldos.</p>'}`;
+    })
+    .catch(() => {
+      $('#bk-body').textContent = 'No se pudo cargar la lista de respaldos.';
+    });
+
   $('#set-go').addEventListener('click', async () => {
     const body = {};
     document.querySelectorAll('[data-set]').forEach((el) => {

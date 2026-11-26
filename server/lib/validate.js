@@ -8,19 +8,38 @@ const docSchema = z
   .max(20)
   .refine((v) => cedula.validate(v).valid, { message: 'Cédula venezolana inválida.' });
 
+// Documento genérico para operaciones fuera de Venezuela (RUT chileno, DNI
+// peruano/argentino, CURP, etc.). Solo se exige un identificador razonable.
+const genericDocSchema = z
+  .string()
+  .trim()
+  .min(5)
+  .max(24)
+  .regex(/^[A-Za-z0-9.\-\s]+$/, { message: 'Documento de identidad inválido.' });
+
 const personSchema = z.object({
   fullName: z.string().trim().min(3).max(100),
   email: z.string().email().max(120).optional().or(z.literal('')),
   phone: z.string().trim().max(30).optional().or(z.literal('')),
-  document: docSchema,
+  document: z.string().trim().min(5).max(24),
+  documentType: z.string().trim().max(20).optional().or(z.literal('')),
 });
 
 const beneficiarySchema = z.object({
   beneficiaryName: z.string().trim().min(3).max(100),
-  beneficiaryDocument: docSchema,
+  beneficiaryDocument: z.string().trim().min(5).max(24),
   beneficiaryEmail: z.string().email().max(120).optional().or(z.literal('')),
   beneficiaryPhone: z.string().trim().max(30).optional().or(z.literal('')),
-  rail: z.enum(['breb', 'pago_movil', 'bank', 'pago_movil_ve', 'transfer_ve', 'cash_ve']),
+  rail: z.enum([
+    'breb',
+    'pago_movil',
+    'bank',
+    'pago_movil_ve',
+    'transfer_ve',
+    'cash_ve',
+    'wallet',
+    'cash_pickup',
+  ]),
   keyType: z.enum(['cedula', 'phone', 'email', 'alphanumeric']).optional(),
   brebKey: z.string().trim().max(60).optional().or(z.literal('')),
   bankCode: z.string().trim().max(20).optional().or(z.literal('')),
@@ -31,21 +50,77 @@ const beneficiarySchema = z.object({
 
 const orderSchema = personSchema.merge(beneficiarySchema).extend({
   amountCents: z.number().int().positive(),
-  currency: z.enum(['USD', 'COP', 'VES']),
+  currency: z.enum(['USD', 'COP', 'VES', 'CLP', 'PEN', 'ARS', 'MXN', 'DOP', 'EUR', 'BRL', 'PYG', 'UYU']),
   payerCountry: z.string().length(2),
   country: z.string().length(2),
+  direction: z.enum(['send', 'receive']).default('send'),
   method: z.enum([
     'card',
     'card_transparent',
+    'cash',
     'pse',
     'breb',
-    'cash',
+    'co_nequi',
+    'co_daviplata',
     've_pago_movil',
     've_transfer',
     've_cash',
+    'cl_webpay',
+    'cl_mercadopago',
+    'cl_transfer',
+    'cash_cl',
+    'pe_yape',
+    'pe_plin',
+    'pe_transfer',
+    'cash_pe',
+    'ar_mercadopago',
+    'ar_transfer',
+    'cash_ar',
+    'mx_spei',
+    'mx_oxxo',
+    'mx_transfer',
+    'cash_mx',
+    'ec_transfer',
+    'ec_pichincha',
+    'cash_ec',
+    'pa_ach',
+    'pa_yappy',
+    'cash_pa',
+    'do_tpago',
+    'do_transfer',
+    'cash_do',
+    'es_bizum',
+    'es_sepa',
+    'cash_es',
+    'us_ach',
+    'us_zelle',
+    'cash_us',
   ]),
   payerBank: z.string().trim().max(20).optional().or(z.literal('')),
   description: z.string().trim().max(100).optional(),
+}).superRefine((data, ctx) => {
+  // La cédula venezolana es obligatoria cuando la operación toca Venezuela.
+  const touchesVe = data.country === 'VE' || data.payerCountry === 'VE';
+  if (touchesVe) {
+    for (const field of ['document', 'beneficiaryDocument']) {
+      if (!cedula.validate(data[field]).valid) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [field],
+          message:
+            field === 'document'
+              ? 'Cédula venezolana inválida.'
+              : 'Cédula venezolana del beneficiario inválida.',
+        });
+      }
+    }
+  } else {
+    for (const field of ['document', 'beneficiaryDocument']) {
+      if (!genericDocSchema.safeParse(data[field]).success) {
+        ctx.addIssue({ code: 'custom', path: [field], message: 'Documento de identidad inválido.' });
+      }
+    }
+  }
 });
 
 const loginSchema = z.object({

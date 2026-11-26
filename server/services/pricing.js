@@ -3,24 +3,49 @@ const { getSettings } = require('../db');
 const { toMinor, toMajor, exponent } = require('../lib/money');
 
 const DESTINATION_CURRENCY = {
-  CO: 'COP',
   VE: 'VES',
-  AR: 'ARS',
-  BR: 'BRL',
+  CO: 'COP',
   CL: 'CLP',
-  MX: 'MXN',
   PE: 'PEN',
+  AR: 'ARS',
+  MX: 'MXN',
+  EC: 'USD',
+  PA: 'USD',
+  DO: 'DOP',
+  BR: 'BRL',
   PY: 'PYG',
   UY: 'UYU',
+  ES: 'EUR',
+  US: 'USD',
+};
+
+// Tasas de referencia (unidades de moneda local por 1 USD). El propietario
+// puede sobreescribirlas desde Ajustes o por .env; estos valores solo evitan
+// que una moneda sin tasa configurada rompa la cotización.
+const DEFAULT_RATES = {
+  USD: 1,
+  VES: 120,
+  COP: 4000,
+  CLP: 950,
+  PEN: 3.75,
+  ARS: 1000,
+  MXN: 18.5,
+  DOP: 59,
+  BRL: 5.4,
+  PYG: 7300,
+  UYU: 40,
+  EUR: 0.92,
 };
 
 function rates() {
   const s = getSettings();
-  return {
-    USD: 1,
-    COP: Number(s.cop_rate || 4000),
-    VES: Number(s.ves_rate || 120),
-  };
+  const out = { ...DEFAULT_RATES };
+  for (const code of Object.keys(DEFAULT_RATES)) {
+    const key = `${code.toLowerCase()}_rate`;
+    const value = Number(s[key]);
+    if (Number.isFinite(value) && value > 0) out[code] = value;
+  }
+  return out;
 }
 
 function convertMinor(minor, from, to, customRates) {
@@ -31,15 +56,16 @@ function convertMinor(minor, from, to, customRates) {
   return toMinor(destMajor, to);
 }
 
-function feeFor(amountCents, settings, currency = 'USD') {
+function feeFor(amountMinor, settings, currency = 'USD') {
   const pct = Number(settings.fees_percent || 3.5);
-  // El mínimo fijo está expresado en centavos de USD; para VES usamos un piso
-  // razonable en bolívares para que la comisión no quede simbólica.
-  const minFee =
-    currency === 'VES'
-      ? Math.max(Number(settings.fee_fixed_cents || 50) * 200, 10000)
-      : Number(settings.fee_fixed_cents || 50);
-  return Math.max(Math.round((amountCents * pct) / 100), minFee);
+  const pctFee = Math.round((amountMinor * pct) / 100);
+  // El fijo está configurado en centavos de USD: se convierte a la moneda
+  // local para que la comisión mínima tenga sentido en cualquier corredor.
+  const fixedUsdCents = Number(settings.fee_fixed_cents || 50);
+  const localRate = rates()[currency] || 1;
+  const fixedLocal = Math.round((fixedUsdCents / 100) * localRate * 10 ** exponent(currency));
+  const floor = currency === 'VES' ? 10000 : 1;
+  return Math.max(pctFee, fixedLocal, floor);
 }
 
 /**
@@ -53,9 +79,17 @@ function quote({ amountCents, currency, country, method }) {
   const settings = getSettings();
   // Los topes están configurados en centavos de USD; para VES usamos topes
   // propios en bolívares (Bs 500 mínimo / Bs 5.000.000 máximo).
+  // Los topes se configuran en centavos de USD y se convierten a la moneda
+  // de cobro; VES mantiene su propio piso/techo por la inflación.
   const isVes = currency === 'VES';
-  const min = isVes ? 50000 : Number(settings.min_order_cents || 500);
-  const max = isVes ? 500000000 : Number(settings.max_order_cents || 500000);
+  const rate = rates()[currency] || 1;
+  const exp = exponent(currency);
+  const min = isVes
+    ? 50000
+    : Math.max(1, Math.round((Number(settings.min_order_cents || 500) / 100) * rate * 10 ** exp));
+  const max = isVes
+    ? 500000000
+    : Math.max(min * 2, Math.round((Number(settings.max_order_cents || 500000) / 100) * rate * 10 ** exp));
   if (!Number.isInteger(amountCents) || amountCents < min) {
     throw new Error(`El monto mínimo es ${(min / 10 ** exponent(currency)).toFixed(exponent(currency))} ${currency}.`);
   }

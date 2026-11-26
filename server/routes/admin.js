@@ -10,6 +10,7 @@ const payouts = require('../services/payouts');
 const ledger = require('../services/ledger');
 const pricing = require('../services/pricing');
 const config = require('../config');
+const backup = require('../services/backup');
 const breb = require('../providers/breb');
 const pse = require('../providers/pse');
 const vepay = require('../providers/vepay');
@@ -218,8 +219,19 @@ const EDITABLE_SETTINGS = new Set([
   'min_withdrawal_cents',
   'ves_rate',
   'cop_rate',
+  'clp_rate',
+  'pen_rate',
+  'ars_rate',
+  'mxn_rate',
+  'dop_rate',
+  'brl_rate',
+  'eur_rate',
   'support_email',
   'support_whatsapp',
+  'support_phone',
+  'support_hours',
+  'direction_send',
+  'direction_receive',
   'maintenance_mode',
   'auto_disburse',
   'breb_merchant_key',
@@ -270,6 +282,38 @@ router.get('/providers', (req, res) => {
 
 router.get('/settings', (req, res) => {
   res.json({ settings: getSettings() });
+});
+
+/* ---------------- respaldos de la base de datos ---------------- */
+
+// Lista los respaldos disponibles en el disco persistente.
+router.get('/backups', auth.requireAdmin, (req, res) => {
+  res.json({
+    data_dir: config.dataDir,
+    db_file: config.dbFile,
+    interval_hours: config.backupIntervalHours,
+    keep: config.backupKeep,
+    encryption: {
+      algorithm: 'AES-256-GCM',
+      kdf: 'scrypt (N=2^15, r=8, p=1)',
+      key_configured: Boolean(config.backupEncryptionKey),
+      note: 'Los respaldos solo se pueden restaurar con BACKUP_ENCRYPTION_KEY.',
+    },
+    backups: backup.listBackups(),
+  });
+});
+
+// Genera un respaldo nuevo y lo descarga.
+router.get('/backup', auth.requireAdmin, (req, res, next) => {
+  try {
+    const r = backup.runBackup('manual');
+    audit({ actor: req.admin.email, action: 'backup.download', entity: 'database', ip: req.ip, metadata: { file: r.name, encrypted: true } });
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('X-Backup-Encryption', 'AES-256-GCM');
+    res.download(r.file, r.name);
+  } catch (err) {
+    next(err);
+  }
 });
 
 router.put('/settings', (req, res) => {

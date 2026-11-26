@@ -11,19 +11,11 @@ const dlocalgo = require('../providers/dlocalgo');
 const pse = require('../providers/pse');
 const breb = require('../providers/breb');
 const vepay = require('../providers/vepay');
+const catalog = require('../lib/countries');
 
-const METHODS = [
-  'card',
-  'card_transparent',
-  'pse',
-  'breb',
-  'cash',
-  've_pago_movil',
-  've_transfer',
-  've_cash',
-];
+const METHODS = catalog.METHOD_IDS;
 const VE_METHODS = ['ve_pago_movil', 've_transfer', 've_cash'];
-const RAILS = ['breb', 'pago_movil', 'bank', 'pago_movil_ve', 'transfer_ve', 'cash_ve'];
+const RAILS = catalog.RAILS;
 
 const METHOD_TO_VE_RAIL = {
   ve_pago_movil: 'pago_movil_ve',
@@ -51,8 +43,27 @@ function parseJson(value, fallback = {}) {
   }
 }
 
+/**
+ * Valida el documento según el país de la operación: cédula venezolana para
+ * Venezuela y documento genérico (RUT, DNI, CURP, pasaporte...) para el resto.
+ */
+function validateDocument(document, country = 'VE') {
+  if (String(country).toUpperCase() === 'VE') return cedula.validate(document);
+  const raw = String(document || '').trim();
+  if (raw.length < 5 || !/^[A-Za-z0-9.\-\s]+$/.test(raw)) {
+    return { valid: false, error: 'Documento de identidad inválido.' };
+  }
+  return { valid: true, type: 'DOC', normalized: raw.toUpperCase(), number: raw };
+}
+
+function maskDocument(document, country = 'VE') {
+  if (String(country).toUpperCase() === 'VE') return cedula.mask(document);
+  const raw = String(document || '').replace(/\s+/g, '');
+  return raw.length >= 3 ? `DOC-***${raw.slice(-3)}` : 'DOC-***';
+}
+
 function upsertCustomer({ fullName, email, phone, document, country = 'VE' }) {
-  const doc = cedula.validate(document);
+  const doc = validateDocument(document, country);
   if (!doc.valid) throw new Error(doc.error);
   const hash = hashDocument(doc.normalized);
   const existing = db
@@ -92,7 +103,7 @@ function upsertCustomer({ fullName, email, phone, document, country = 'VE' }) {
 }
 
 function createBeneficiary(customerId, data) {
-  const doc = cedula.validate(data.document);
+  const doc = validateDocument(data.document, data.country);
   if (!doc.valid) throw new Error(`Documento del beneficiario: ${doc.error}`);
   if (!RAILS.includes(data.rail)) throw new Error('Vía de pago del beneficiario inválida.');
   if (!data.fullName || data.fullName.trim().length < 3) throw new Error('Nombre del beneficiario inválido.');
@@ -118,6 +129,14 @@ function createBeneficiary(customerId, data) {
     if (!vepay.validateBank(data.bankCode).valid) throw new Error('Selecciona el banco del beneficiario.');
     if (!data.accountNumber) throw new Error('Ingresa el número de cuenta del beneficiario.');
   } else if (data.rail === 'cash_ve') {
+    if (!data.fullName) throw new Error('Nombre del beneficiario requerido.');
+  } else if (data.rail === 'wallet') {
+    // Billeteras: Nequi, Daviplata, Yape, Plin, Mercado Pago, tPago, Yappy, Bizum, Zelle…
+    if (!key || String(key).replace(/[^\dA-Za-z@.+_-]/g, '').length < 4) {
+      throw new Error('Ingresa el teléfono, correo o alias de la billetera.');
+    }
+    if (!data.bankName) throw new Error('Selecciona la billetera de destino.');
+  } else if (data.rail === 'cash_pickup') {
     if (!data.fullName) throw new Error('Nombre del beneficiario requerido.');
   }
 
@@ -163,6 +182,14 @@ function isDemoProviderError(err) {
   return err && err.auth && config.demoFallback;
 }
 
+/** Vía de entrega por defecto: la del método si es válida en el destino. */
+function defaultRail(method, destinationCountry) {
+  const rails = catalog.receiveRails(destinationCountry);
+  const preferred = catalog.railFor(method);
+  if (rails.includes(preferred)) return preferred;
+  return rails[0] || 'bank';
+}
+
 function badRequest(message) {
   const err = new Error(message);
   err.status = 400;
@@ -171,15 +198,20 @@ function badRequest(message) {
 
 async function createOrder(input, { ip } = {}) {
   if (!METHODS.includes(input.method)) throw badRequest('Método de pago inválido.');
-  const currency = String(input.currency || 'USD').toUpperCase();
   const payerCountry = String(input.payerCountry || 'CO').toUpperCase();
   const destinationCountry = String(input.country || 'VE').toUpperCase();
+  // La moneda la determina el método de cobro (o el país del pagador si el
+  // método es genérico: tarjeta / efectivo).
+  const currency = catalog.currencyFor(input.method, payerCountry);
 
-  if (['pse', 'breb'].includes(input.method) && currency !== 'COP') {
-    throw badRequest('PSE y BRE-B operan en pesos colombianos (COP).');
+  if (!catalog.isValidMethodFor(input.method, payerCountry)) {
+    throw badRequest(`El método seleccionado no está disponible para pagos desde ${payerCountry}.`);
   }
-  if (input.method === 'pse' && payerCountry !== 'CO') {
-    throw badRequest('PSE solo está disponible para pagos desde Colombia.');
+  if (!catalog.country(destinationCountry)) {
+    throw badRequest('País de destino no soportado.');
+  }
+  if (input.currency && String(input.currency).toUpperCase() !== currency) {
+    throw badRequest(`Este método se cobra en ${currency}.`);
   }
   // Respeta los interruptores de vías de pago configurados por el propietario.
   const settings = getSettings();
@@ -220,7 +252,7 @@ async function createOrder(input, { ip } = {}) {
     email: input.email,
     phone: input.phone,
     document: input.document,
-    country: 'VE',
+    country: destinationCountry === 'VE' ? 'VE' : payerCountry,
   });
 
   let beneficiaryId;
@@ -229,9 +261,7 @@ async function createOrder(input, { ip } = {}) {
     fullName: input.beneficiaryName,
     document: input.beneficiaryDocument,
     country: destinationCountry,
-    rail:
-      input.rail ||
-      (isVeMethod ? METHOD_TO_VE_RAIL[input.method] : destinationCountry === 'VE' ? 'pago_movil' : 'breb'),
+    rail: input.rail || defaultRail(input.method, destinationCountry),
     keyType: input.keyType,
     brebKey: input.brebKey,
     phone: input.beneficiaryPhone,
@@ -251,12 +281,11 @@ async function createOrder(input, { ip } = {}) {
     input.description || (isVeMethod ? 'Pago / remesa en Venezuela' : 'Remesa / pago internacional')
   ).slice(0, 100);
   const metadata = {
+    direction: input.direction === 'receive' ? 'receive' : 'send',
     payer_country: payerCountry,
-    payer_document_masked: cedula.mask(input.document),
-    beneficiary_document_masked: cedula.mask(input.beneficiaryDocument),
-    rail:
-      input.rail ||
-      (isVeMethod ? METHOD_TO_VE_RAIL[input.method] : destinationCountry === 'VE' ? 'pago_movil' : 'breb'),
+    payer_document_masked: maskDocument(input.document, destinationCountry === 'VE' ? 'VE' : payerCountry),
+    beneficiary_document_masked: maskDocument(input.beneficiaryDocument, destinationCountry),
+    rail: input.rail || defaultRail(input.method, destinationCountry),
     key_type: input.keyType || null,
     breb_key_masked: input.brebKey ? `${String(input.brebKey).slice(0, 3)}***${String(input.brebKey).slice(-3)}` : null,
     demo: false,

@@ -72,10 +72,39 @@ app.use((err, req, res, next) => {
   });
 });
 
+// Respaldos automáticos de la base (disco persistente).
+try {
+  require('./services/backup').schedule();
+} catch (err) {
+  console.error('[backup] no se pudo programar:', err.message);
+}
+
+// Archivo de bloqueo con PID: permite que `backup --restore` detecte que la
+// base está en uso y se niegue a sobrescribirla (evita corromper el WAL).
+const fs = require('fs');
+const LOCK_FILE = path.join(config.dataDir, `${config.dbFile}.lock`);
+try {
+  fs.mkdirSync(config.dataDir, { recursive: true });
+  fs.writeFileSync(LOCK_FILE, String(process.pid), { mode: 0o600 });
+} catch (err) {
+  console.error('[lock] no se pudo crear el archivo de bloqueo:', err.message);
+}
+function releaseLock() {
+  try {
+    if (fs.existsSync(LOCK_FILE) && fs.readFileSync(LOCK_FILE, 'utf8').trim() === String(process.pid)) {
+      fs.unlinkSync(LOCK_FILE);
+    }
+  } catch {
+    /* nada */
+  }
+}
+process.on('exit', releaseLock);
+
 const server = app.listen(config.port, '0.0.0.0', () => {
   console.log(`\n  ${config.appName} escuchando en http://localhost:${config.port}`);
   console.log(`  Entorno: ${config.env} | Demo fallback: ${config.demoFallback}`);
-  console.log(`  BRE-B: ${require('./providers/breb').mode()} | PSE: ${require('./providers/pse').mode()}\n`);
+  console.log(`  BRE-B: ${require('./providers/breb').mode()} | PSE: ${require('./providers/pse').mode()}`);
+  console.log(`  Base de datos: ${path.join(config.dataDir, config.dbFile)}\n`);
 });
 
 cleanupSessions();
@@ -84,6 +113,7 @@ cleanupTimer.unref();
 
 function shutdown(signal) {
   console.log(`\n${signal} recibido, cerrando servidor...`);
+  releaseLock();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 5000).unref();
 }
