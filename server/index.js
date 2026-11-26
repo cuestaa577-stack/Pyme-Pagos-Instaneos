@@ -72,7 +72,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-const server = app.listen(config.port, () => {
+const server = app.listen(config.port, '0.0.0.0', () => {
   console.log(`\n  ${config.appName} escuchando en http://localhost:${config.port}`);
   console.log(`  Entorno: ${config.env} | Demo fallback: ${config.demoFallback}`);
   console.log(`  BRE-B: ${require('./providers/breb').mode()} | PSE: ${require('./providers/pse').mode()}\n`);
