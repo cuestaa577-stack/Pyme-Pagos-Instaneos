@@ -140,7 +140,13 @@ function renderLogin() {
 
   $('#lg-forgot').addEventListener('click', (e) => {
     e.preventDefault();
-    toast('El acceso se restablece en el servidor: ejecuta "node server/scripts/reset-admin.js" con la nueva clave en ADMIN_PASSWORD.', 'ok', 9000);
+    toast(
+      'Para restablecer el acceso: en Render abre Shell y ejecuta ' +
+        '«node server/scripts/admin.js --list» para ver los correos existentes, y luego ' +
+        '«node server/scripts/admin.js --reset --email TU_CORREO --password NUEVA_CLAVE».',
+      'ok',
+      12000
+    );
   });
 
   const submit = async () => {

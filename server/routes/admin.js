@@ -29,11 +29,32 @@ const loginLimiter = rateLimit({
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Demasiados intentos. Espera 10 minutos.' },
+  // Un login correcto no consume cuota: así, si te equivocas 3 veces y aciertas
+  // a la cuarta, no te quedas bloqueado por tus propios aciertos.
+  skipSuccessfulRequests: true,
+  handler: (req, res) => {
+    const retry = Math.ceil((req.rateLimit?.resetTime ? new Date(req.rateLimit.resetTime).getTime() - Date.now() : 600000) / 1000);
+    res.status(429).json({
+      error: `Demasiados intentos fallidos. Espera ${Math.max(1, Math.ceil(retry / 60))} minuto(s) o reinicia el servicio.`,
+      retry_after_seconds: Math.max(1, retry),
+    });
+  },
 });
 
-router.post('/login', loginLimiter, (req, res) => {
-  const data = parse(loginSchema, req.body || {});
+// Validamos ANTES del rate limit: una petición mal formada (contraseña de 2
+// letras, correo sin @) no debe gastar intentos. Antes sí los gastaba y dejaba
+// al propietario fuera 10 minutos sin haber probado nada real.
+function validateLogin(req, res, next) {
+  try {
+    req.loginData = parse(loginSchema, req.body || {});
+    return next();
+  } catch (err) {
+    return res.status(400).json({ error: err.message || 'Datos inválidos.' });
+  }
+}
+
+router.post('/login', validateLogin, loginLimiter, (req, res) => {
+  const data = req.loginData;
   const result = auth.login({ email: data.email, password: data.password, ip: req.ip, userAgent: req.headers['user-agent'] });
   if (!result) return res.status(401).json({ error: 'Correo o contraseña incorrectos.' });
   res.cookie(auth.COOKIE, result.cookie, auth.cookieOptions());

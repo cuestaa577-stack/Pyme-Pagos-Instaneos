@@ -414,3 +414,116 @@ correspondiente fallará en modo `live`.
 - [ ] En **Ajustes → Respaldos cifrados** aparece al menos un `.db.enc` y el
       botón de descarga funciona.
 - [ ] Has revocado el token `ghp_…` que se pegó en el chat.
+
+---
+
+## 13. "Puse mi correo y contraseña y no me deja entrar como administrador"
+
+Es el problema más reportado y tiene **tres causas posibles**. Ve por orden.
+
+### Causa 1 — Bloqueo por intentos fallidos (la más común)
+
+El login tiene un límite de **10 intentos fallidos cada 10 minutos** por IP. Al
+llegar al límite responde `429` y **rechaza incluso la contraseña correcta**:
+
+```json
+{"error":"Demasiados intentos fallidos. Espera 10 minuto(s) o reinicia el servicio."}
+```
+
+Antes, además, los intentos **mal formados** (contraseña de 2 letras, correo sin
+`@`) también gastaban cuota, así que te podías bloquear sin haber probado nada
+real. Eso ya está corregido: ahora se valida primero y un login exitoso no
+consume cuota.
+
+**Solución:** espera 10 minutos, o reinicia el servicio (Render → Manual Deploy).
+El contador vive en memoria y se borra al reiniciar.
+
+### Causa 2 — El administrador se creó con otro correo
+
+`seedAdmin()` solo crea el administrador **la primera vez**, cuando la base está
+vacía. Si la base se creó cuando `ADMIN_EMAIL` no estaba definida, el
+administrador quedó como `admin@remesaya.app` con la clave
+`cambia-esta-clave-ahora`, y poner tu correo después **no cambiaba nada**.
+
+**Comprobación rápida:** intenta entrar con
+
+```
+admin@remesaya.app
+cambia-esta-clave-ahora
+```
+
+Si entras, ese era el problema. Cámbialo de inmediato.
+
+**Solución definitiva:** en Render → **Shell**:
+
+```bash
+# ver qué administradores existen y con qué correo
+node server/scripts/admin.js --list
+
+# crear o resetear el tuyo
+node server/scripts/admin.js --reset \
+  --email cuestaa577@gmail.com \
+  --password 'Angelo18@'
+
+# comprobar que la clave quedó bien
+node server/scripts/admin.js --test \
+  --email cuestaa577@gmail.com \
+  --password 'Angelo18@'
+```
+
+`--list` te dice exactamente qué correos hay y cuándo fue el último acceso. Ese
+es el dato que resuelve el 90 % de estos casos.
+
+### Causa 3 — Las variables nunca se guardaron en Render
+
+Si al pulsar **Save Changes** en *Environment* aparecía
+`Duplicate key 'SMARTFIELDS_API_KEY' is not allowed` (ver §11), **Render no
+guardó nada**, incluidos `ADMIN_EMAIL` y `ADMIN_PASSWORD`. La app arrancó con los
+valores por defecto.
+
+**Solución:** borra las filas duplicadas, guarda, y verifica en la Shell:
+
+```bash
+node -e "console.log(process.env.ADMIN_EMAIL, '|', process.env.ADMIN_PASSWORD ? 'clave definida' : 'SIN CLAVE')"
+```
+
+Si imprime `undefined | SIN CLAVE`, las variables no están llegando.
+
+### Lo que cambió en el código (commit de esta versión)
+
+`server/db.js` ahora **sincroniza la contraseña**: si `ADMIN_PASSWORD` está
+definida en el entorno y no coincide con el hash guardado, la actualiza al
+arrancar. Es decir, **cambiar `ADMIN_PASSWORD` en Render y redesplegar siempre
+funciona**, aunque la base ya existiera.
+
+```
+[db] contraseña del administrador actualizada desde ADMIN_PASSWORD (cuestaa577@gmail.com)
+```
+
+Y si hay administradores con otros correos, avisa:
+
+```
+[db] ATENCIÓN: además de cuestaa577@gmail.com hay otros administradores: admin@remesaya.app.
+```
+
+> **Orden de prioridad:** si defines `ADMIN_PASSWORD` en el entorno, esa clave
+> manda y sobrescribe cualquier `--reset` que hayas hecho por Shell en el
+> siguiente arranque. Para que un `--reset` sea permanente, borra
+> `ADMIN_PASSWORD` del entorno o pon allí la misma clave.
+
+### Resumen de comandos del administrador
+
+```bash
+node server/scripts/admin.js --list
+node server/scripts/admin.js --reset --email X --password Y
+node server/scripts/admin.js --add   --email X --password Y
+node server/scripts/admin.js --delete --email X
+node server/scripts/admin.js --test  --email X --password Y
+```
+
+Todos funcionan también en local (`npm run admin` para listar) y dentro de
+Docker:
+
+```bash
+docker exec remesaya node server/scripts/admin.js --list
+```

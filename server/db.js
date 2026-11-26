@@ -289,14 +289,52 @@ const seedSettings = db.transaction(() => {
 });
 seedSettings();
 
+/**
+ * Crea el administrador si no existe y, si ADMIN_PASSWORD está definida de
+ * forma explícita, sincroniza la contraseña.
+ *
+ * Antes solo insertaba si el correo no existía. Eso provocaba el fallo más
+ * común: la base se creó con el correo por defecto (admin@remesaya.app) o con
+ * otra clave, y cambiar ADMIN_EMAIL / ADMIN_PASSWORD en Render después no
+ * tenía ningún efecto. Ahora las variables de entorno mandan.
+ */
 function seedAdmin() {
-  const existing = db.prepare('SELECT id FROM admins WHERE email = ?').get(config.admin.email);
+  const email = config.admin.email;
+  const password = config.admin.password;
+  const existing = db.prepare('SELECT id, email, password_hash FROM admins WHERE email = ?').get(email);
+
   if (!existing) {
-    const hash = bcrypt.hashSync(config.admin.password, 12);
+    const hash = bcrypt.hashSync(password, 12);
     db.prepare('INSERT INTO admins (email, password_hash, name) VALUES (?, ?, ?)').run(
-      config.admin.email,
+      email,
       hash,
       'Administrador'
+    );
+    console.log(`[db] administrador creado: ${email}`);
+    return;
+  }
+
+  // Si la contraseña vino por variable de entorno y no coincide con la
+  // guardada, la actualizamos. Así "cambio ADMIN_PASSWORD en Render y
+  // redeploy" siempre funciona.
+  if (process.env.ADMIN_PASSWORD && !bcrypt.compareSync(password, existing.password_hash)) {
+    db.prepare('UPDATE admins SET password_hash = ? WHERE id = ?').run(
+      bcrypt.hashSync(password, 12),
+      existing.id
+    );
+    console.log(`[db] contraseña del administrador actualizada desde ADMIN_PASSWORD (${email})`);
+  }
+
+  // Aviso si hay otros administradores con correos distintos: es la causa
+  // típica de "pongo mi correo y no me deja entrar".
+  const others = db
+    .prepare('SELECT email FROM admins WHERE email <> ?')
+    .all(email)
+    .map((r) => r.email);
+  if (others.length) {
+    console.warn(
+      `[db] ATENCIÓN: además de ${email} hay otros administradores: ${others.join(', ')}. ` +
+        'Si intentas entrar con uno de ellos, usa SU contraseña (no la de ADMIN_PASSWORD).'
     );
   }
 }
