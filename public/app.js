@@ -1487,6 +1487,18 @@ function setupPwa() {
     });
   });
 
+  // Botón de APK: solo aparece si el archivo /app.apk existe en el servidor.
+  if (apk) {
+    fetch('/app.apk', { method: 'HEAD' })
+      .then((r) => {
+        if (r.ok) {
+          apk.hidden = false;
+          apk.setAttribute('download', 'RemesaYa.apk');
+        }
+      })
+      .catch(() => {});
+  }
+
   // Barra de "sin conexión" (los datos financieros nunca se cachean).
   let bar = $('#ry-offline');
   if (!bar) {
